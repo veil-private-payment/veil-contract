@@ -16,6 +16,7 @@ research implementation.
 
 | Path | Role |
 |---|---|
+| `contracts/pool` | Shielded pool: storage, admin surface, deposit and shielded transact |
 | `contracts/types` | Shared contract types |
 | `contracts/soroban-utils` | BN254 and Groth16 helpers for contract code |
 | `poseidon2` | Poseidon2 hash used by the contracts and the circuit |
