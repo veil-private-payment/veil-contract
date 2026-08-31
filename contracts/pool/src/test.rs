@@ -1,8 +1,16 @@
 use crate::{
     PoolContract, PoolContractClient,
     merkle_with_history::{MerkleDataKey, MerkleTreeWithHistory},
+    types::Account,
 };
-use soroban_sdk::{Address, Env, U256, testutils::Address as _};
+use soroban_sdk::{
+    Address, Bytes, Env, IntoVal, Map, Symbol, TryFromVal, U256, Val, Vec, symbol_short,
+    testutils::{Address as _, Events as _},
+    token::{StellarAssetClient, TokenClient},
+    vec,
+    xdr::{self},
+};
+use soroban_utils::constants::bn256_modulus;
 
 struct TestSetup {
     admin: Address,
@@ -68,6 +76,100 @@ fn register_pool_with_fee(
             levels,
         ),
     )
+}
+
+fn assert_contract_event(env: &Env, pool_id: &Address, topics: Vec<Val>, data: Val) {
+    let expected_topics = topics.into();
+    let expected_data = xdr::ScVal::try_from_val(env, &data)
+        .unwrap_or_else(|_| panic!("expected event data should convert to XDR"));
+
+    let pool_events = env.events().all().filter_by_contract(pool_id);
+    assert!(
+        pool_events.events().iter().any(|event| {
+            let xdr::ContractEventBody::V0(body) = &event.body;
+            body.topics == expected_topics && body.data == expected_data
+        }),
+        "expected contract event was not emitted; events: {pool_events:?}",
+    );
+}
+
+fn assert_deposit_event(
+    env: &Env,
+    pool_id: &Address,
+    asset: &Address,
+    commitment: U256,
+    index: u32,
+    amount_bucket: i128,
+) {
+    let pool_events = env.events().all().filter_by_contract(pool_id);
+    assert_eq!(
+        pool_events,
+        vec![
+            env,
+            (
+                pool_id.clone(),
+                (symbol_short!("Deposit"), commitment, pool_id.clone()).into_val(env),
+                Map::<Symbol, Val>::from_array(
+                    env,
+                    [
+                        (
+                            Symbol::new(env, "amount_bucket"),
+                            amount_bucket.into_val(env),
+                        ),
+                        (symbol_short!("asset"), asset.clone().into_val(env)),
+                        (symbol_short!("index"), index.into_val(env)),
+                    ],
+                )
+                .into_val(env),
+            )
+        ]
+    );
+}
+
+fn assert_deposit_event_present(
+    env: &Env,
+    pool_id: &Address,
+    asset: &Address,
+    commitment: U256,
+    index: u32,
+    amount_bucket: i128,
+) {
+    let topics: Vec<Val> = (symbol_short!("Deposit"), commitment, pool_id.clone()).into_val(env);
+    let data: Val = Map::<Symbol, Val>::from_array(
+        env,
+        [
+            (
+                Symbol::new(env, "amount_bucket"),
+                amount_bucket.into_val(env),
+            ),
+            (symbol_short!("asset"), asset.clone().into_val(env)),
+            (symbol_short!("index"), index.into_val(env)),
+        ],
+    )
+    .into_val(env);
+    assert_contract_event(env, pool_id, topics, data);
+}
+
+fn assert_public_key_event(
+    env: &Env,
+    pool_id: &Address,
+    owner: &Address,
+    encryption_key: &Bytes,
+    note_key: &Bytes,
+) {
+    let topics: Vec<Val> = (Symbol::new(env, "public_key_event"), owner.clone()).into_val(env);
+    let data: Val = Map::<Symbol, Val>::from_array(
+        env,
+        [
+            (
+                Symbol::new(env, "encryption_key"),
+                encryption_key.clone().into_val(env),
+            ),
+            (symbol_short!("note_key"), note_key.clone().into_val(env)),
+        ],
+    )
+    .into_val(env);
+    assert_contract_event(env, pool_id, topics, data);
 }
 
 /// Create a test environment that disables snapshot writing under Miri.
@@ -309,4 +411,215 @@ fn merkle_init_rejects_zero_levels() {
         let result = MerkleTreeWithHistory::init(&env, levels);
         assert!(result.is_err());
     });
+}
+
+#[test]
+fn register_emits_public_key_event_schema() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let owner = Address::generate(&env);
+    let encryption_key = Bytes::from_array(&env, &[7u8; 32]);
+    let note_key = Bytes::from_array(&env, &[9u8; 32]);
+    let account = Account {
+        owner: owner.clone(),
+        encryption_key: encryption_key.clone(),
+        note_key: note_key.clone(),
+    };
+
+    pool.register(&account);
+
+    assert_public_key_event(&env, &pool_id, &owner, &encryption_key, &note_key);
+}
+
+#[test]
+fn deposit_transfers_tokens_and_returns_commitment_index() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1_000);
+    let pool_id = register_pool(&env, &setup, max, 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let asset = StellarAssetClient::new(&env, &setup.token);
+    let sender = Address::generate(&env);
+    let commitment = U256::from_u32(&env, 0xCAFE);
+
+    asset.mint(&sender, &500);
+    let root_before = pool.get_root();
+
+    let commitment_index = pool.deposit(&sender, &125, &commitment);
+
+    assert_eq!(commitment_index, 0);
+    assert!(pool.has_commitment(&commitment));
+    assert_eq!(token.balance(&sender), 375);
+    assert_eq!(token.balance(&pool_id), 125);
+    assert_ne!(pool.get_root(), root_before);
+
+    let next_index: u64 = env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .get(&MerkleDataKey::NextIndex)
+            .unwrap_or_else(|| panic!("expected next index to be stored"))
+    });
+    assert_eq!(next_index, 2);
+}
+
+#[test]
+fn deposit_emits_indexable_event_without_sender_metadata() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1_000);
+    let pool_id = register_pool(&env, &setup, max, 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let asset = StellarAssetClient::new(&env, &setup.token);
+    let sender = Address::generate(&env);
+    let commitment = U256::from_u32(&env, 0xD06);
+
+    asset.mint(&sender, &500);
+
+    assert_eq!(pool.deposit(&sender, &125, &commitment), 0);
+
+    assert_deposit_event(&env, &pool_id, &setup.token, commitment, 0, 125_i128);
+}
+
+#[test]
+fn deposit_keeps_stable_commitment_indices_across_multiple_deposits() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let asset = StellarAssetClient::new(&env, &setup.token);
+    let sender = Address::generate(&env);
+    let commitment0 = U256::from_u32(&env, 0xD10);
+    let commitment1 = U256::from_u32(&env, 0xD11);
+
+    asset.mint(&sender, &500);
+    let root_before = pool.get_root();
+
+    let index0 = pool.deposit(&sender, &125, &commitment0);
+    assert_eq!(index0, 0);
+    assert_deposit_event_present(
+        &env,
+        &pool_id,
+        &setup.token,
+        commitment0.clone(),
+        index0,
+        125_i128,
+    );
+    let root_after_first = pool.get_root();
+
+    let index1 = pool.deposit(&sender, &75, &commitment1);
+    assert_eq!(index1, 2);
+    assert_deposit_event_present(
+        &env,
+        &pool_id,
+        &setup.token,
+        commitment1.clone(),
+        index1,
+        75_i128,
+    );
+
+    assert!(pool.has_commitment(&commitment0));
+    assert!(pool.has_commitment(&commitment1));
+    assert_eq!(token.balance(&sender), 300);
+    assert_eq!(token.balance(&pool_id), 200);
+    assert_ne!(root_after_first, root_before);
+    assert_ne!(pool.get_root(), root_after_first);
+}
+
+#[test]
+fn deposit_rejects_duplicate_commitment_without_transferring_again() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1_000);
+    let pool_id = register_pool(&env, &setup, max, 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let asset = StellarAssetClient::new(&env, &setup.token);
+    let sender = Address::generate(&env);
+    let commitment = U256::from_u32(&env, 0xBEEF);
+
+    asset.mint(&sender, &500);
+
+    assert_eq!(pool.deposit(&sender, &125, &commitment), 0);
+    assert!(pool.try_deposit(&sender, &125, &commitment).is_err());
+
+    assert_eq!(token.balance(&sender), 375);
+    assert_eq!(token.balance(&pool_id), 125);
+}
+
+#[test]
+fn deposit_rejects_invalid_amounts_without_transferring() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 100);
+    let pool_id = register_pool(&env, &setup, max, 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let asset = StellarAssetClient::new(&env, &setup.token);
+    let sender = Address::generate(&env);
+
+    asset.mint(&sender, &500);
+
+    assert!(
+        pool.try_deposit(&sender, &0, &U256::from_u32(&env, 0x01))
+            .is_err()
+    );
+    assert!(
+        pool.try_deposit(&sender, &101, &U256::from_u32(&env, 0x02))
+            .is_err()
+    );
+
+    assert_eq!(token.balance(&sender), 500);
+    assert_eq!(token.balance(&pool_id), 0);
+}
+
+#[test]
+fn deposit_rejects_commitment_outside_bn254_field_without_transferring() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1_000);
+    let pool_id = register_pool(&env, &setup, max, 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let asset = StellarAssetClient::new(&env, &setup.token);
+    let sender = Address::generate(&env);
+    let invalid_commitment = bn256_modulus(&env);
+
+    asset.mint(&sender, &500);
+
+    assert!(
+        pool.try_deposit(&sender, &125, &invalid_commitment)
+            .is_err()
+    );
+
+    assert!(!pool.has_commitment(&invalid_commitment));
+    assert_eq!(token.balance(&sender), 500);
+    assert_eq!(token.balance(&pool_id), 0);
+}
+
+#[test]
+fn has_nullifier_is_false_before_any_spend() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    assert!(!pool.has_nullifier(&U256::from_u32(&env, 0x01)));
 }
