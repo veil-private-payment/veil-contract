@@ -7,3 +7,6 @@ pub mod storage_types;
 pub mod types;
 
 pub use contract::*;
+
+#[cfg(test)]
+mod test;
