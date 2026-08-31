@@ -12,12 +12,28 @@ use crate::storage_types::DataKey;
 
 // ========== Nullifiers map ==========
 
+/// Get the nullifiers map from storage
+pub(crate) fn get_nullifiers(env: &Env) -> Result<Map<U256, bool>, ContractError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Nullifiers)
+        .ok_or(ContractError::NotInitialized)
+}
+
 /// Save the nullifiers map to storage
 pub(crate) fn set_nullifiers(env: &Env, m: &Map<U256, bool>) {
     env.storage().persistent().set(&DataKey::Nullifiers, m);
 }
 
 // ========== Commitments map ==========
+
+/// Get the inserted commitments map from storage
+pub(crate) fn get_commitments(env: &Env) -> Result<Map<U256, bool>, ContractError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Commitments)
+        .ok_or(ContractError::NotInitialized)
+}
 
 /// Save the inserted commitments map to storage
 pub(crate) fn set_commitments(env: &Env, m: &Map<U256, bool>) {
