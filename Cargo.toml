@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "contracts/asp-membership",
     "contracts/types",
     "contracts/soroban-utils",
     "contracts/pool",
@@ -15,6 +16,7 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+asp-membership = { path = "contracts/asp-membership" }
 ark-bn254 = { version = "0.6.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.6.0", default-features = false }
 ark-ff = { version = "0.6.0", default-features = false }
@@ -24,8 +26,10 @@ cfg-if = { version = "1", default-features = false }
 contract-types = { path = "contracts/types" }
 getrandom = { version = "0.2", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
+num-bigint = { version = "0.4.6", default-features = false, features = ["serde"] }
 sha2 = { version = "0.11.0", default-features = false }
 soroban-utils = { path = "contracts/soroban-utils" }
+zkhash = { path = "poseidon2" }
 soroban-sdk = { version = "26", default-features = false, features = ["hazmat"] }
 
 [workspace.lints.rust]
