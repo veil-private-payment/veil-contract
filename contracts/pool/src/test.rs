@@ -3,6 +3,7 @@ use crate::{
     merkle_with_history::{MerkleDataKey, MerkleTreeWithHistory},
     types::Account,
 };
+use asp_membership::{ASPMembership, ASPMembershipClient};
 use soroban_sdk::{
     Address, Bytes, Env, IntoVal, Map, Symbol, TryFromVal, U256, Val, Vec, symbol_short,
     testutils::{Address as _, Events as _},
@@ -12,29 +13,38 @@ use soroban_sdk::{
 };
 use soroban_utils::constants::bn256_modulus;
 
+/// Number of levels for the ASP Membership Merkle tree in tests
+const ASP_MEMBERSHIP_LEVELS: u32 = 8;
+
 struct TestSetup {
     admin: Address,
     token: Address,
     verifier: Address,
     asp_membership_address: Address,
+    asp_membership_client: ASPMembershipClient<'static>,
 }
 
-/// Deploy the token contract and generate the addresses the pool stores.
+/// Deploy the contracts the pool talks to.
 ///
-/// The constructor only records the verifier and ASP membership addresses, so
-/// these tests do not need those contracts deployed. Tests that make
-/// cross-contract calls register the real contracts instead.
+/// The ASP membership contract is deployed for real because the pool reads its
+/// root through a cross-contract call. The verifier is still a generated
+/// address: nothing calls it until shielded transactions land.
 fn setup_test_contracts(env: &Env) -> TestSetup {
     let admin = Address::generate(env);
     let token = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
 
+    let asp_membership_address =
+        env.register(ASPMembership, (admin.clone(), ASP_MEMBERSHIP_LEVELS));
+    let asp_membership_client = ASPMembershipClient::new(env, &asp_membership_address);
+
     TestSetup {
         admin,
         token,
         verifier: Address::generate(env),
-        asp_membership_address: Address::generate(env),
+        asp_membership_address,
+        asp_membership_client,
     }
 }
 
@@ -622,4 +632,63 @@ fn has_nullifier_is_false_before_any_spend() {
     let pool = PoolContractClient::new(&env, &pool_id);
 
     assert!(!pool.has_nullifier(&U256::from_u32(&env, 0x01)));
+}
+
+#[test]
+fn get_asp_membership_root_reads_through_to_the_asp_contract() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    assert_eq!(
+        pool.get_asp_membership_root(),
+        setup.asp_membership_client.get_root()
+    );
+}
+
+#[test]
+fn get_asp_membership_root_tracks_enrollment() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let empty_root = pool.get_asp_membership_root();
+
+    setup
+        .asp_membership_client
+        .insert_leaf(&U256::from_u32(&env, 0xA11CE));
+
+    let enrolled_root = pool.get_asp_membership_root();
+    assert_ne!(enrolled_root, empty_root);
+    assert_eq!(enrolled_root, setup.asp_membership_client.get_root());
+}
+
+#[test]
+fn update_asp_membership_repoints_the_root_lookup() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    setup
+        .asp_membership_client
+        .insert_leaf(&U256::from_u32(&env, 0xB0B));
+    let enrolled_root = pool.get_asp_membership_root();
+
+    // A freshly deployed ASP contract is empty, so the pool must report the
+    // empty root once it is repointed.
+    let fresh_asp = env.register(ASPMembership, (setup.admin.clone(), ASP_MEMBERSHIP_LEVELS));
+    let fresh_client = ASPMembershipClient::new(&env, &fresh_asp);
+    pool.update_asp_membership(&fresh_asp);
+
+    assert_ne!(pool.get_asp_membership_root(), enrolled_root);
+    assert_eq!(pool.get_asp_membership_root(), fresh_client.get_root());
 }
