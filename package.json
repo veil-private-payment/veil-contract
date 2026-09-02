@@ -1,0 +1,10 @@
+{
+  "name": "veil-contract",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.26.0",
+  "description": "Circuit build tooling for the Veil contract repository.",
+  "devDependencies": {
+    "snarkjs": "0.7.6"
+  }
+}
