@@ -20,6 +20,7 @@ research implementation.
 | `contracts/asp-membership` | Association Set Provider allowlist read by the pool on every spend |
 | `contracts/types` | Shared contract types |
 | `contracts/soroban-utils` | BN254 and Groth16 helpers for contract code |
+| `circuits` | Circom policy transaction circuit, plus its proving and verifying keys |
 | `poseidon2` | Poseidon2 hash used by the contracts and the circuit |
 
 More crates land as the milestone progresses.
@@ -35,6 +36,17 @@ More crates land as the milestone progresses.
 make fmt-check
 make check
 ```
+
+## Circuit
+
+```sh
+make install-circom
+make compile-policy-circuit
+make setup-policy-circuit-keys
+```
+
+See [circuits/README.md](circuits/README.md) for the public input order and
+the trusted setup limitation.
 
 ## License
 
