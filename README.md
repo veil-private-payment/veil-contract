@@ -17,6 +17,9 @@ research implementation.
 | Path | Role |
 |---|---|
 | `contracts/pool` | Shielded pool: storage, admin surface, deposit and shielded transact |
+| `contracts/verifier` | Groth16 verifier over BN254, embeds the circuit verifying key at build time |
+| `contracts/mock-verifier` | Demo-only verifier fallback for local tests, performs no verification |
+| `circuit-keys` | Key parsing helpers shared by the verifier build script |
 | `contracts/asp-membership` | Association Set Provider allowlist read by the pool on every spend |
 | `contracts/types` | Shared contract types |
 | `contracts/soroban-utils` | BN254 and Groth16 helpers for contract code |
