@@ -1,15 +1,20 @@
 use crate::{
     PoolContract, PoolContractClient,
     merkle_with_history::{MerkleDataKey, MerkleTreeWithHistory},
-    types::Account,
+    types::{Account, ExtData, Proof},
+    verifier_boundary::VerifierPublicInputs,
 };
 use asp_membership::{ASPMembership, ASPMembershipClient};
+use contract_types::Groth16Proof;
+use mock_verifier::MockGroth16Verifier;
 use soroban_sdk::{
-    Address, Bytes, Env, IntoVal, Map, Symbol, TryFromVal, U256, Val, Vec, symbol_short,
+    Address, Bytes, BytesN, Env, I256, IntoVal, Map, Symbol, TryFromVal, U256, Val, Vec,
+    crypto::bn254::{Bn254Fr, Bn254G1Affine as G1Affine, Bn254G2Affine as G2Affine},
+    symbol_short,
     testutils::{Address as _, Events as _},
     token::{StellarAssetClient, TokenClient},
     vec,
-    xdr::{self},
+    xdr::{self, ToXdr},
 };
 use soroban_utils::constants::bn256_modulus;
 
@@ -180,6 +185,70 @@ fn assert_public_key_event(
     )
     .into_val(env);
     assert_contract_event(env, pool_id, topics, data);
+}
+
+fn mk_bytesn32(env: &Env, fill: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[fill; 32])
+}
+
+fn mk_ext_data(env: &Env, recipient: Address, ext_amount: i32) -> ExtData {
+    ExtData {
+        recipient,
+        ext_amount: I256::from_i32(env, ext_amount),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    }
+}
+
+fn compute_ext_hash(env: &Env, ext: &ExtData) -> BytesN<32> {
+    let payload = ext.clone().to_xdr(env);
+    let digest: BytesN<32> = env.crypto().keccak256(&payload).into();
+    let digest_u256 = U256::from_be_bytes(env, &Bytes::from(digest));
+    let reduced = digest_u256.rem_euclid(&bn256_modulus(env));
+    let mut buf = [0u8; 32];
+    reduced.to_be_bytes().copy_into_slice(&mut buf);
+    BytesN::from_array(env, &buf)
+}
+
+fn fr_from_u256(env: &Env, value: &U256) -> Bn254Fr {
+    let mut buf = [0u8; 32];
+    value.to_be_bytes().copy_into_slice(&mut buf);
+    Bn254Fr::from_bytes(BytesN::from_array(env, &buf))
+}
+
+/// The deterministic proof shape accepted by the mock verifier.
+fn mk_mock_groth16_proof(env: &Env) -> Groth16Proof {
+    let g1_bytes = {
+        let mut bytes = [0u8; 64];
+        bytes[31] = 1;
+        bytes[63] = 2;
+        bytes
+    };
+    let g2_bytes = {
+        let mut bytes = [0u8; 128];
+        bytes[31] = 1;
+        bytes[63] = 1;
+        bytes[95] = 1;
+        bytes[127] = 1;
+        bytes
+    };
+
+    Groth16Proof {
+        a: G1Affine::from_array(env, &g1_bytes),
+        b: G2Affine::from_array(env, &g2_bytes),
+        c: G1Affine::from_array(env, &g1_bytes),
+    }
+}
+
+/// Deploy the pool against the demo-only mock verifier.
+///
+/// The mock verifier checks the public input count and one fixed proof shape.
+/// It exists so the transaction pipeline can be tested without a real proving
+/// run; it performs no Groth16 verification.
+fn setup_test_contracts_with_mock_verifier(env: &Env) -> TestSetup {
+    let mut setup = setup_test_contracts(env);
+    setup.verifier = env.register(MockGroth16Verifier, ());
+    setup
 }
 
 /// Create a test environment that disables snapshot writing under Miri.
@@ -691,4 +760,221 @@ fn update_asp_membership_repoints_the_root_lookup() {
 
     assert_ne!(pool.get_asp_membership_root(), enrolled_root);
     assert_eq!(pool.get_asp_membership_root(), fresh_client.get_root());
+}
+
+#[test]
+fn verifier_public_inputs_follow_policy_transaction_order() {
+    let env = test_env();
+    let ext_data_hash = mk_bytesn32(&env, 0x77);
+    let root = U256::from_u32(&env, 1);
+    let public_amount = U256::from_u32(&env, 2);
+    let nullifier0 = U256::from_u32(&env, 3);
+    let nullifier1 = U256::from_u32(&env, 4);
+    let output_commitment0 = U256::from_u32(&env, 5);
+    let output_commitment1 = U256::from_u32(&env, 6);
+    let asp_membership_root = U256::from_u32(&env, 7);
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root: root.clone(),
+        input_nullifiers: vec![&env, nullifier0.clone(), nullifier1.clone()],
+        output_commitment0: output_commitment0.clone(),
+        output_commitment1: output_commitment1.clone(),
+        public_amount: public_amount.clone(),
+        ext_data_hash: ext_data_hash.clone(),
+        asp_membership_root: asp_membership_root.clone(),
+    };
+
+    let inputs = VerifierPublicInputs::from_proof(&env, &proof).values;
+    let expected = vec![
+        &env,
+        fr_from_u256(&env, &root),
+        fr_from_u256(&env, &public_amount),
+        Bn254Fr::from_bytes(ext_data_hash),
+        fr_from_u256(&env, &nullifier0),
+        fr_from_u256(&env, &nullifier1),
+        fr_from_u256(&env, &output_commitment0),
+        fr_from_u256(&env, &output_commitment1),
+        fr_from_u256(&env, &asp_membership_root),
+        fr_from_u256(&env, &asp_membership_root),
+    ];
+
+    // Nine values, matching the circuit's public input count.
+    assert_eq!(inputs.len(), 9);
+    assert_eq!(inputs, expected);
+}
+
+struct TransactCase {
+    pool_id: Address,
+    sender: Address,
+    ext: ExtData,
+    proof: Proof,
+}
+
+/// Build a pool on the mock verifier plus a matching well-formed transaction.
+fn mk_transact_case(env: &Env, setup: &TestSetup) -> TransactCase {
+    let pool_id = register_pool(env, setup, U256::from_u32(env, 1_000), 8);
+    let pool = PoolContractClient::new(env, &pool_id);
+
+    let ext = mk_ext_data(env, Address::generate(env), 0);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: pool.get_root(),
+        input_nullifiers: vec![env, U256::from_u32(env, 0x101), U256::from_u32(env, 0x102)],
+        output_commitment0: U256::from_u32(env, 0x201),
+        output_commitment1: U256::from_u32(env, 0x202),
+        public_amount: U256::from_u32(env, 0),
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+
+    TransactCase {
+        pool_id,
+        sender: Address::generate(env),
+        ext,
+        proof,
+    }
+}
+
+#[test]
+fn transact_settles_against_the_mock_verifier() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    let nullifier0 = case.proof.input_nullifiers.get_unchecked(0);
+    let nullifier1 = case.proof.input_nullifiers.get_unchecked(1);
+    let commitment0 = case.proof.output_commitment0.clone();
+    let commitment1 = case.proof.output_commitment1.clone();
+
+    pool.transact(&case.proof, &case.ext, &case.sender);
+
+    assert!(pool.has_nullifier(&nullifier0));
+    assert!(pool.has_nullifier(&nullifier1));
+    assert!(pool.has_commitment(&commitment0));
+    assert!(pool.has_commitment(&commitment1));
+}
+
+#[test]
+fn transact_rejects_a_spend_whose_asp_root_is_not_the_live_allowlist() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    // A spender who is not enrolled cannot prove against the live root, so the
+    // only proof they can build carries a root of their own. The pool compares
+    // the proof's root against the live allowlist and rejects it.
+    let mut proof = case.proof;
+    proof.asp_membership_root = U256::from_u32(&env, 0xDEAD);
+
+    let nullifier0 = proof.input_nullifiers.get_unchecked(0);
+    let commitment0 = proof.output_commitment0.clone();
+
+    assert!(pool.try_transact(&proof, &case.ext, &case.sender).is_err());
+
+    assert!(!pool.has_nullifier(&nullifier0));
+    assert!(!pool.has_commitment(&commitment0));
+}
+
+#[test]
+fn transact_rejects_a_stale_asp_root_after_a_new_enrollment() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    // The allowlist moves on after the proof was built.
+    setup
+        .asp_membership_client
+        .insert_leaf(&U256::from_u32(&env, 0xA11CE));
+
+    assert!(
+        pool.try_transact(&case.proof, &case.ext, &case.sender)
+            .is_err()
+    );
+}
+
+#[test]
+fn transact_rejects_unknown_root() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    let mut proof = case.proof;
+    proof.root = U256::from_u32(&env, 0xBAD1);
+
+    assert!(pool.try_transact(&proof, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn transact_rejects_bad_ext_hash() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    let mut proof = case.proof;
+    proof.ext_data_hash = mk_bytesn32(&env, 0x01);
+
+    assert!(pool.try_transact(&proof, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn transact_rejects_bad_public_amount() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    let mut proof = case.proof;
+    proof.public_amount = U256::from_u32(&env, 7);
+
+    assert!(pool.try_transact(&proof, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn transact_rejects_a_replayed_nullifier() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    pool.transact(&case.proof, &case.ext, &case.sender);
+
+    // Same nullifiers, fresh output commitments.
+    let mut replay = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root: pool.get_root(),
+        input_nullifiers: case.proof.input_nullifiers.clone(),
+        output_commitment0: U256::from_u32(&env, 0x301),
+        output_commitment1: U256::from_u32(&env, 0x302),
+        public_amount: U256::from_u32(&env, 0),
+        ext_data_hash: case.proof.ext_data_hash.clone(),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+    replay.root = pool.get_root();
+
+    assert!(pool.try_transact(&replay, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn get_ext_data_hash_matches_the_binding_hash() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let ext = mk_ext_data(&env, Address::generate(&env), -5);
+
+    assert_eq!(pool.get_ext_data_hash(&ext), compute_ext_hash(&env, &ext));
 }
