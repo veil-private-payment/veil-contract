@@ -1,16 +1,32 @@
 #![allow(clippy::too_many_arguments)]
 use crate::{
     error::ContractError,
-    event::{DepositEvent, PublicKeyEvent},
+    event::{DepositEvent, NewCommitmentEvent, NewNullifierEvent, PublicKeyEvent, SettlementEvent},
     merkle_with_history::MerkleTreeWithHistory,
     storage,
     storage_types::{DataKey, MAX_FEE_BPS},
-    types::{Account, PoolConfig},
+    types::{Account, ExtData, PoolConfig, Proof},
+    verifier_boundary,
 };
 use soroban_sdk::{
-    Address, BytesN, Env, Map, U256, contract, contractclient, contractimpl, token::TokenClient,
+    Address, Bytes, BytesN, Env, I256, Map, U256, Vec, contract, contractclient, contractimpl,
+    token::TokenClient, xdr::ToXdr,
 };
 use soroban_utils::constants::bn256_modulus;
+
+/// Hash external data using Keccak256
+///
+/// Serializes the external data to XDR, hashes it with Keccak256,
+/// and reduces the result modulo the BN256 field size.
+pub fn hash_ext_data(env: &Env, ext: &ExtData) -> BytesN<32> {
+    let payload = ext.clone().to_xdr(env);
+    let digest: BytesN<32> = env.crypto().keccak256(&payload).into();
+    let digest_u256 = U256::from_be_bytes(env, &Bytes::from(digest));
+    let reduced = digest_u256.rem_euclid(&bn256_modulus(env));
+    let mut buf = [0u8; 32];
+    reduced.to_be_bytes().copy_into_slice(&mut buf);
+    BytesN::from_array(env, &buf)
+}
 
 // Contract clients for cross-contract dependencies
 #[contractclient(crate_path = "soroban_sdk", name = "ASPMembershipClient")]
@@ -156,6 +172,37 @@ impl PoolContract {
         Ok(commitment_index)
     }
 
+    /// Execute a shielded transaction with deposit handling
+    ///
+    /// This is the main entry point for users to interact with the pool.
+    /// If `ext_amount > 0`, tokens are transferred from the sender to the pool
+    /// before processing the transaction.
+    pub fn transact(
+        env: &Env,
+        proof: Proof,
+        ext_data: ExtData,
+        sender: Address,
+    ) -> Result<(), ContractError> {
+        sender.require_auth();
+        let token = storage::get_token(env)?;
+        let token_client = TokenClient::new(env, &token);
+        let zero = I256::from_i32(env, 0);
+
+        // Handle deposit if ext_amount > 0
+        if ext_data.ext_amount > zero {
+            let deposit_u = U256::from_be_bytes(env, &ext_data.ext_amount.to_be_bytes());
+            let max = storage::get_maximum_deposit(env)?;
+            if deposit_u > max {
+                return Err(ContractError::WrongExtAmount);
+            }
+            let this = env.current_contract_address();
+            let amount = Self::i256_to_i128_nonneg(env, &ext_data.ext_amount)?;
+            token_client.transfer(&sender, &this, &amount);
+        }
+
+        Self::internal_transact(env, proof, ext_data)
+    }
+
     // ======================================================================
     // Read-only views
     // ======================================================================
@@ -194,6 +241,14 @@ impl PoolContract {
     /// duplicate guard without reading raw contract storage.
     pub fn has_commitment(env: &Env, commitment: U256) -> Result<bool, ContractError> {
         Self::is_commitment_inserted(env, &commitment)
+    }
+
+    /// Return the canonical external-data hash used by `transact`.
+    ///
+    /// Off-chain proof adapters and local fixtures can call this view to verify
+    /// they are binding the exact same public withdrawal/send data as the pool.
+    pub fn get_ext_data_hash(env: &Env, ext_data: ExtData) -> BytesN<32> {
+        Self::hash_ext_data(env, &ext_data)
     }
 
     /// Get the current Merkle root from the ASP Membership contract
@@ -326,5 +381,258 @@ impl PoolContract {
         commitments.set(commitment.clone(), true);
         storage::set_commitments(env, &commitments);
         Ok(())
+    }
+
+    // ======================================================================
+    // Internal helpers - the shielded-transaction pipeline and its checks.
+    // `transact` funnels into `internal_transact`, which runs validation
+    // steps from cheapest to most expensive (field check -> root -> nullifier
+    // -> ext hash -> ASP root -> ZK verify) before mutating state.
+    // ======================================================================
+
+    /// Process a private transaction
+    ///
+    /// Validates the proof and all public inputs, marks nullifiers as spent,
+    /// processes withdrawals, and inserts new commitments into the Merkle tree.
+    fn internal_transact(env: &Env, proof: Proof, ext_data: ExtData) -> Result<(), ContractError> {
+        Self::ensure_proof_field_elements(env, &proof)?;
+
+        // 1. Merkle root check
+        if !MerkleTreeWithHistory::is_known_root(env, &proof.root)? {
+            return Err(ContractError::UnknownRoot);
+        }
+        // 2. Nullifier checks (prevent double-spending)
+        Self::ensure_nullifiers_unspent(env, &proof.input_nullifiers)?;
+        // 3. External data hash check
+        let ext_hash = Self::hash_ext_data(env, &ext_data);
+        if ext_hash != proof.ext_data_hash {
+            return Err(ContractError::WrongExtHash);
+        }
+
+        // 4. Public amount check
+        let expected_public_amount =
+            Self::calculate_public_amount(env, ext_data.ext_amount.clone())?;
+        if proof.public_amount != expected_public_amount {
+            return Err(ContractError::WrongExtAmount);
+        }
+
+        // 5. ASP membership root must match the live allowlist. The circuit
+        //    binds the spender key to this root, so a spender who is not
+        //    enrolled cannot produce a proof that satisfies both.
+        let member_root = Self::get_asp_membership_root(env)?;
+        if member_root != proof.asp_membership_root {
+            return Err(ContractError::InvalidProof);
+        }
+
+        // 6. ZK proof verification
+        if !Self::verify_proof(env, &proof)? {
+            return Err(ContractError::InvalidProof);
+        }
+
+        Self::ensure_commitment_unused(env, &proof.output_commitment0)?;
+        Self::ensure_commitment_unused(env, &proof.output_commitment1)?;
+        if proof.output_commitment0 == proof.output_commitment1 {
+            return Err(ContractError::AlreadyInsertedCommitment);
+        }
+
+        // 7. Mark nullifiers as spent
+        Self::spend_nullifiers_once(env, &proof.input_nullifiers)?;
+        for n in proof.input_nullifiers.iter() {
+            NewNullifierEvent { nullifier: n }.publish(env);
+        }
+
+        // 8. Process withdrawal if ext_amount < 0
+        let token = storage::get_token(env)?;
+        let token_client = TokenClient::new(env, &token);
+        let this = env.current_contract_address();
+        let zero = I256::from_i32(env, 0);
+
+        let withdrawal_recipient = if ext_data.ext_amount < zero {
+            let abs = zero.sub(&ext_data.ext_amount);
+            let amount: i128 = Self::i256_to_i128_nonneg(env, &abs)?;
+            let fee = Self::calculate_fee_amount(amount, storage::get_fee_bps(env)?)?;
+            let recipient_amount = amount.checked_sub(fee).ok_or(ContractError::Overflow)?;
+
+            if recipient_amount > 0 {
+                token_client.transfer(&this, &ext_data.recipient, &recipient_amount);
+            }
+            if fee > 0 {
+                let fee_recipient = storage::get_fee_recipient(env)?;
+                token_client.transfer(&this, &fee_recipient, &fee);
+            }
+            Some(ext_data.recipient.clone())
+        } else {
+            None
+        };
+
+        // 9. Insert new commitments into Merkle tree
+        let (idx_0, idx_1) = MerkleTreeWithHistory::insert_two_leaves(
+            env,
+            proof.output_commitment0.clone(),
+            proof.output_commitment1.clone(),
+        )?;
+        Self::mark_commitment_inserted(env, &proof.output_commitment0)?;
+        Self::mark_commitment_inserted(env, &proof.output_commitment1)?;
+
+        // 10. Emit commitment events
+        NewCommitmentEvent {
+            commitment: proof.output_commitment0.clone(),
+            index: idx_0,
+            encrypted_output: ext_data.encrypted_output0.clone(),
+        }
+        .publish(env);
+
+        NewCommitmentEvent {
+            commitment: proof.output_commitment1.clone(),
+            index: idx_1,
+            encrypted_output: ext_data.encrypted_output1.clone(),
+        }
+        .publish(env);
+
+        let amount_bucket = ext_data
+            .ext_amount
+            .to_i128()
+            .ok_or(ContractError::WrongExtAmount)?;
+
+        // 11. Emit one settlement event per nullifier for indexer lookups.
+        for nullifier in proof.input_nullifiers.iter() {
+            SettlementEvent {
+                nullifier,
+                pool: this.clone(),
+                output_commitment0: proof.output_commitment0.clone(),
+                output_commitment1: proof.output_commitment1.clone(),
+                output_index0: idx_0,
+                output_index1: idx_1,
+                amount_bucket,
+                public_amount: proof.public_amount.clone(),
+                recipient: withdrawal_recipient.clone(),
+                asset: token.clone(),
+            }
+            .publish(env);
+        }
+
+        Ok(())
+    }
+
+    /// Verify a zero-knowledge proof through the configured verifier contract
+    fn verify_proof(env: &Env, proof: &Proof) -> Result<bool, ContractError> {
+        if proof.proof.is_empty() {
+            return Err(ContractError::InvalidProof);
+        }
+        let verifier = storage::get_verifier(env)?;
+        Ok(verifier_boundary::verify_policy_transaction(
+            env, &verifier, proof,
+        ))
+    }
+
+    fn ensure_proof_field_elements(env: &Env, proof: &Proof) -> Result<(), ContractError> {
+        Self::ensure_field_element(env, &proof.root)?;
+        Self::ensure_field_element(env, &proof.public_amount)?;
+        Self::ensure_field_elements(env, &proof.input_nullifiers)?;
+        Self::ensure_field_element(env, &proof.output_commitment0)?;
+        Self::ensure_field_element(env, &proof.output_commitment1)?;
+        Self::ensure_field_element(env, &proof.asp_membership_root)?;
+        Ok(())
+    }
+
+    fn ensure_field_elements(env: &Env, values: &Vec<U256>) -> Result<(), ContractError> {
+        for value in values.iter() {
+            Self::ensure_field_element(env, &value)?;
+        }
+        Ok(())
+    }
+
+    /// Ensure all provided nullifiers are currently unspent and unique.
+    ///
+    /// This catches both nullifiers already stored from earlier transactions
+    /// and duplicate nullifiers inside the same transaction payload.
+    fn ensure_nullifiers_unspent(env: &Env, nullifiers: &Vec<U256>) -> Result<(), ContractError> {
+        let stored = storage::get_nullifiers(env)?;
+        let mut seen: Map<U256, bool> = Map::new(env);
+
+        for nullifier in nullifiers.iter() {
+            if stored.get(nullifier.clone()).unwrap_or(false)
+                || seen.get(nullifier.clone()).unwrap_or(false)
+            {
+                return Err(ContractError::AlreadySpentNullifier);
+            }
+            seen.set(nullifier, true);
+        }
+
+        Ok(())
+    }
+
+    /// Check and mark nullifiers in one storage update.
+    fn spend_nullifiers_once(env: &Env, nullifiers: &Vec<U256>) -> Result<(), ContractError> {
+        Self::ensure_nullifiers_unspent(env, nullifiers)?;
+
+        let mut stored = storage::get_nullifiers(env)?;
+        for nullifier in nullifiers.iter() {
+            stored.set(nullifier, true);
+        }
+        storage::set_nullifiers(env, &stored);
+
+        Ok(())
+    }
+
+    /// Calculate the public amount from external amount
+    ///
+    /// Computes `public_amount = ext_amount` in the BN256 field.
+    /// For positive results, returns the value directly.
+    /// For negative results, returns `FIELD_SIZE - |public_amount|`.
+    fn calculate_public_amount(env: &Env, ext_amount: I256) -> Result<U256, ContractError> {
+        let abs_ext = Self::i256_abs_to_u256(env, &ext_amount);
+        if abs_ext >= Self::max_ext_amount(env) {
+            return Err(ContractError::WrongExtAmount);
+        }
+
+        let zero = I256::from_i32(env, 0);
+
+        if ext_amount >= zero {
+            let pa_bytes = ext_amount.to_be_bytes();
+            Ok(U256::from_be_bytes(env, &pa_bytes))
+        } else {
+            let neg = zero.sub(&ext_amount);
+            let neg_bytes = neg.to_be_bytes();
+            let neg_u256 = U256::from_be_bytes(env, &neg_bytes);
+
+            let field = bn256_modulus(env);
+            Ok(field.sub(&neg_u256))
+        }
+    }
+
+    /// Calculate protocol fee for a public withdrawal amount.
+    ///
+    /// `amount` is the gross amount leaving the pool. The fee is rounded down
+    /// in token base units so small withdrawals remain possible.
+    fn calculate_fee_amount(amount: i128, fee_bps: u32) -> Result<i128, ContractError> {
+        amount
+            .checked_mul(i128::from(fee_bps))
+            .and_then(|v| v.checked_div(i128::from(MAX_FEE_BPS)))
+            .ok_or(ContractError::Overflow)
+    }
+
+    /// Maximum absolute external amount allowed (2^248)
+    fn max_ext_amount(env: &Env) -> U256 {
+        U256::from_parts(env, 0x0100_0000_0000_0000, 0, 0, 0)
+    }
+
+    /// Convert a non-negative I256 to i128 with bounds checking
+    fn i256_to_i128_nonneg(env: &Env, v: &I256) -> Result<i128, ContractError> {
+        if *v < I256::from_i32(env, 0) {
+            return Err(ContractError::WrongExtAmount);
+        }
+        v.to_i128().ok_or(ContractError::WrongExtAmount)
+    }
+
+    /// Convert I256 to its absolute value as U256
+    fn i256_abs_to_u256(env: &Env, v: &I256) -> U256 {
+        let zero = I256::from_i32(env, 0);
+        let abs = if *v >= zero { v.clone() } else { zero.sub(v) };
+        U256::from_be_bytes(env, &abs.to_be_bytes())
+    }
+
+    fn hash_ext_data(env: &Env, ext: &ExtData) -> BytesN<32> {
+        hash_ext_data(env, ext)
     }
 }

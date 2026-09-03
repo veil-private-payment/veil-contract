@@ -17,6 +17,8 @@ soroban-utils.workspace = true
 
 [dev-dependencies]
 asp-membership = { workspace = true }
+circom-groth16-verifier = { workspace = true }
+mock-verifier = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 
 [lints]

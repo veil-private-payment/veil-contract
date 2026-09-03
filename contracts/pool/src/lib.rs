@@ -6,6 +6,7 @@ pub mod merkle_with_history;
 pub mod storage;
 pub mod storage_types;
 pub mod types;
+pub mod verifier_boundary;
 
 pub use contract::*;
 
