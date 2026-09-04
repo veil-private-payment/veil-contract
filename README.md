@@ -54,6 +54,14 @@ The allowlist contract has its own admin. By default only that admin may enrol
 a key; `set_admin_insert_only(false)` opens enrolment to anyone, which is
 useful on testnet.
 
+### External Calls
+
+The token contract is code this pool does not own. Both paths that call it now
+finish their state changes first: `deposit` records the commitment before
+pulling funds, and a withdrawal inserts the output commitments and spends the
+nullifiers before paying anyone. A regression test drives a token that
+re-enters `deposit` and asserts the commitment is not inserted twice.
+
 ## Client Views
 
 Two views exist so a client can build a proof the pool will accept, rather than
