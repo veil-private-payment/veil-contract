@@ -151,12 +151,17 @@ impl PoolContract {
         let token = storage::get_token(env)?;
         let token_client = TokenClient::new(env, &token);
         let this = env.current_contract_address();
-        token_client.transfer(&from, &this, &amount);
 
+        // Record the commitment before calling the token contract. `transfer`
+        // hands control to code this contract does not own, and a token that
+        // calls back into `deposit` would otherwise pass the duplicate check
+        // again and insert the same commitment twice.
         let zero = U256::from_u32(env, 0);
         let (commitment_index, _) =
             MerkleTreeWithHistory::insert_two_leaves(env, commitment.clone(), zero)?;
         Self::mark_commitment_inserted(env, &commitment)?;
+
+        token_client.transfer(&from, &this, &amount);
 
         DepositEvent {
             commitment,
@@ -448,29 +453,22 @@ impl PoolContract {
             NewNullifierEvent { nullifier: n }.publish(env);
         }
 
-        // 8. Process withdrawal if ext_amount < 0
+        // 8. Work out the payout, without moving anything yet
         let token = storage::get_token(env)?;
         let token_client = TokenClient::new(env, &token);
         let this = env.current_contract_address();
         let zero = I256::from_i32(env, 0);
 
-        let withdrawal_recipient = if ext_data.ext_amount < zero {
+        let payout = if ext_data.ext_amount < zero {
             let abs = zero.sub(&ext_data.ext_amount);
             let amount: i128 = Self::i256_to_i128_nonneg(env, &abs)?;
             let fee = Self::calculate_fee_amount(amount, storage::get_fee_bps(env)?)?;
             let recipient_amount = amount.checked_sub(fee).ok_or(ContractError::Overflow)?;
-
-            if recipient_amount > 0 {
-                token_client.transfer(&this, &ext_data.recipient, &recipient_amount);
-            }
-            if fee > 0 {
-                let fee_recipient = storage::get_fee_recipient(env)?;
-                token_client.transfer(&this, &fee_recipient, &fee);
-            }
-            Some(ext_data.recipient.clone())
+            Some((recipient_amount, fee))
         } else {
             None
         };
+        let withdrawal_recipient = payout.map(|_| ext_data.recipient.clone());
 
         // 9. Insert new commitments into Merkle tree
         let (idx_0, idx_1) = MerkleTreeWithHistory::insert_two_leaves(
@@ -480,6 +478,19 @@ impl PoolContract {
         )?;
         Self::mark_commitment_inserted(env, &proof.output_commitment0)?;
         Self::mark_commitment_inserted(env, &proof.output_commitment1)?;
+
+        // Pay out only once every state change is committed. `transfer` hands
+        // control to the token contract, and this contract does not own that
+        // code.
+        if let Some((recipient_amount, fee)) = payout {
+            if recipient_amount > 0 {
+                token_client.transfer(&this, &ext_data.recipient, &recipient_amount);
+            }
+            if fee > 0 {
+                let fee_recipient = storage::get_fee_recipient(env)?;
+                token_client.transfer(&this, &fee_recipient, &fee);
+            }
+        }
 
         // 10. Emit commitment events
         NewCommitmentEvent {

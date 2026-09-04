@@ -1160,3 +1160,85 @@ fn deposit_and_transact_reject_unauthorized_senders() {
             .is_err()
     );
 }
+
+// ==========================================================================
+// Reentrancy
+// ==========================================================================
+
+/// A token whose `transfer` calls back into the pool.
+///
+/// `deposit` and the withdrawal path both call a token contract, which is code
+/// this pool does not own. This stand-in models the worst case: a token that
+/// re-enters the pool during the transfer.
+#[soroban_sdk::contract]
+pub struct ReentrantToken;
+
+#[soroban_sdk::contractimpl]
+impl ReentrantToken {
+    /// Point the token at a pool and a commitment to replay.
+    pub fn arm(env: Env, pool: Address, commitment: U256) {
+        env.storage().instance().set(&symbol_short!("pool"), &pool);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("cm"), &commitment);
+    }
+
+    pub fn transfer(env: Env, from: Address, _to: Address, amount: i128) {
+        let armed: Option<Address> = env.storage().instance().get(&symbol_short!("pool"));
+        let Some(pool) = armed else {
+            return;
+        };
+        // Fire once, so the recursion terminates on its own if the pool ever
+        // stops rejecting the second insert.
+        env.storage().instance().remove(&symbol_short!("pool"));
+
+        let commitment: U256 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("cm"))
+            .unwrap_or_else(|| panic!("armed token should carry a commitment"));
+
+        PoolContractClient::new(&env, &pool).deposit(&from, &amount, &commitment);
+    }
+
+    pub fn balance(_env: Env, _id: Address) -> i128 {
+        0
+    }
+}
+
+/// A token that re-enters `deposit` cannot get the same commitment inserted
+/// twice.
+///
+/// The nested call aborts in the host rather than reaching the pool's duplicate
+/// guard, so this asserts the outcome, not the mechanism. It is a regression
+/// test for the property, kept alongside the ordering in `deposit`, which
+/// records the commitment before handing control to the token so the guard
+/// would still hold if the host ever allowed the nested call through.
+#[test]
+fn a_reentrant_token_cannot_insert_a_commitment_twice() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token = env.register(ReentrantToken, ());
+    let asp_membership_address = env.register(ASPMembership, (admin.clone(), 8u32));
+    let asp_membership_client = ASPMembershipClient::new(&env, &asp_membership_address);
+    let setup = TestSetup {
+        admin: admin.clone(),
+        token: token.clone(),
+        verifier: Address::generate(&env),
+        asp_membership_address,
+        asp_membership_client,
+    };
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let commitment = U256::from_u32(&env, 0xDEAD);
+    ReentrantTokenClient::new(&env, &token).arm(&pool_id, &commitment);
+
+    let depositor = Address::generate(&env);
+    assert!(pool.try_deposit(&depositor, &10, &commitment).is_err());
+
+    // Nothing was recorded: the outer deposit unwound with the inner one.
+    assert!(!pool.has_commitment(&commitment));
+}
