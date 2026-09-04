@@ -1,0 +1,61 @@
+{
+  "circuit": "policy_tx_2_2",
+  "order": [
+    "root",
+    "public_amount",
+    "ext_data_hash",
+    "input_nullifier0",
+    "input_nullifier1",
+    "output_commitment0",
+    "output_commitment1",
+    "asp_membership_root0",
+    "asp_membership_root1"
+  ],
+  "values": [
+    {
+      "decimal": "12956022842368497098760144262845951793836329411648182795372576273916370448338",
+      "hex": "0x1ca4d95c27524d3198dfcbc766dcdb6eaaab3ead78ce7fa62b743966ecc56fd2",
+      "name": "root"
+    },
+    {
+      "decimal": "0",
+      "hex": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "name": "public_amount"
+    },
+    {
+      "decimal": "0",
+      "hex": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "name": "ext_data_hash"
+    },
+    {
+      "decimal": "11358804175784011556983566069223353458886112955603727705581586970645942642628",
+      "hex": "0x191cdaf721f9f3bd32669c26d3eef27b5acef556d951ce984793f43db89227c4",
+      "name": "input_nullifier0"
+    },
+    {
+      "decimal": "5661759540997593801566077163815376793423270506064564019570566578814685499857",
+      "hex": "0x0c84713d21be9b21e4b4661af60771a93a02d20f047f34e631bd6c5f891f51d1",
+      "name": "input_nullifier1"
+    },
+    {
+      "decimal": "12504064260450509756453750934038451387838467560505144842529655044891494113251",
+      "hex": "0x1ba50cb0a27114093979e8420294d457c465d9778741552b36bae5410d54dfe3",
+      "name": "output_commitment0"
+    },
+    {
+      "decimal": "8319259856693768839264026897690405527719272397566682985814748602147602523354",
+      "hex": "0x126488c24bd0cd9550a0164be8f1c31e62105ddc7bec6ace3ef00950cd8964da",
+      "name": "output_commitment1"
+    },
+    {
+      "decimal": "7546424822326513303174988876709224296436695522356871057304553430979695085831",
+      "hex": "0x10af2005aaaf4c6986d1b939b26c8f2eaf32d2d28d71a04c0127392e77cc0907",
+      "name": "asp_membership_root0"
+    },
+    {
+      "decimal": "7546424822326513303174988876709224296436695522356871057304553430979695085831",
+      "hex": "0x10af2005aaaf4c6986d1b939b26c8f2eaf32d2d28d71a04c0127392e77cc0907",
+      "name": "asp_membership_root1"
+    }
+  ]
+}

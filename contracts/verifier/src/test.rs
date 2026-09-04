@@ -12,17 +12,17 @@ use soroban_sdk::{
 };
 use soroban_utils::{g1_bytes_from_ark, g2_bytes_from_ark, vk_bytes_from_ark};
 
-/// Simple circuit that exposes eleven public inputs (as many as a tx circuit).
+/// Simple circuit that exposes nine public inputs (as many as the policy circuit).
 ///
 /// The circuit ties the first public input to a witness to keep the proving
 /// key minimal while still exercising the fixed `ic` array length expected by
-/// the contract (11 public inputs + 1 constant term).
+/// the contract (9 public inputs + 1 constant term).
 #[derive(Clone)]
-struct ElevenInputCircuit<F: Field> {
-    inputs: [F; 11],
+struct NineInputCircuit<F: Field> {
+    inputs: [F; 9],
 }
 
-impl<F: Field> ConstraintSynthesizer<F> for ElevenInputCircuit<F> {
+impl<F: Field> ConstraintSynthesizer<F> for NineInputCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         // Register all public inputs
         let mut input_vars = alloc::vec::Vec::with_capacity(self.inputs.len());
@@ -67,17 +67,10 @@ fn serialize_proof(env: &Env, proof: &Groth16Proof) -> Bytes {
     data
 }
 
-fn build_test(
-    env: &Env,
-) -> (
-    VerificationKeyBytes,
-    Groth16Proof,
-    Vec<Bn254Fr>,
-    [ArkFr; 11],
-) {
+fn build_test(env: &Env) -> (VerificationKeyBytes, Groth16Proof, Vec<Bn254Fr>, [ArkFr; 9]) {
     let mut rng = seeded_rng();
-    let inputs = [ArkFr::from(33u64); 11];
-    let circuit = ElevenInputCircuit { inputs };
+    let inputs = [ArkFr::from(33u64); 9];
+    let circuit = NineInputCircuit { inputs };
     let params =
         Groth16::<Bn254>::generate_random_parameters_with_reduction(circuit.clone(), &mut rng)
             .expect("params failed to generate");
@@ -183,4 +176,110 @@ fn policy_vk_matches_pool_boundary_shape() {
 
     assert_eq!(public_input_count, 9);
     assert_eq!(ic.len(), 10);
+}
+
+/// Decode a decimal field element string into a Soroban BN254 scalar.
+fn fr_from_decimal(env: &Env, decimal: &str) -> Bn254Fr {
+    let value = decimal
+        .parse::<num_bigint::BigUint>()
+        .unwrap_or_else(|err| panic!("public input should be a decimal integer: {err}"));
+    let be = value.to_bytes_be();
+    let offset = 32usize
+        .checked_sub(be.len())
+        .unwrap_or_else(|| panic!("public input should fit in 32 bytes"));
+    let mut buf = [0u8; 32];
+    buf[offset..].copy_from_slice(&be);
+    Bn254Fr::from_bytes(BytesN::from_array(env, &buf))
+}
+
+/// The committed fixture is a real proof over the `policy_tx_2_2` circuit,
+/// generated with the proving key in `circuits/keys`. This is the end-to-end
+/// check that a proof the client can actually produce verifies against the
+/// verification key embedded in this contract.
+#[test]
+fn verifies_the_real_policy_transaction_proof() {
+    let env = test_env();
+
+    let proof_json: Value = serde_json::from_str(include_str!(
+        "../../../circuits/fixtures/policy_tx_2_2_proof.json"
+    ))
+    .unwrap_or_else(|err| panic!("proof fixture should parse: {err}"));
+    let public_json: Value = serde_json::from_str(include_str!(
+        "../../../circuits/fixtures/policy_tx_2_2_public_inputs.json"
+    ))
+    .unwrap_or_else(|err| panic!("public input fixture should parse: {err}"));
+
+    let proof_hex = proof_json
+        .get("proofBytes")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("proof fixture should carry proofBytes"));
+    let proof_bytes = hex::decode(proof_hex.trim_start_matches("0x"))
+        .unwrap_or_else(|err| panic!("proofBytes should be hex: {err}"));
+    let proof = Groth16Proof::try_from(Bytes::from_slice(&env, &proof_bytes))
+        .unwrap_or_else(|_| panic!("proof fixture should decode into a Groth16 proof"));
+
+    let values = public_json
+        .get("values")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("public input fixture should carry values"));
+    assert_eq!(values.len(), 9);
+
+    let mut public_inputs: Vec<Bn254Fr> = Vec::new(&env);
+    for value in values {
+        let decimal = value
+            .get("decimal")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("public input should carry a decimal"));
+        public_inputs.push_back(fr_from_decimal(&env, decimal));
+    }
+
+    let id = env.register(CircomGroth16Verifier, ());
+    let client = CircomGroth16VerifierClient::new(&env, &id);
+
+    assert!(client.verify(&proof, &public_inputs));
+}
+
+/// Flipping one public input must break the pairing check.
+#[test]
+fn rejects_the_real_proof_under_a_tampered_public_input() {
+    let env = test_env();
+
+    let proof_json: Value = serde_json::from_str(include_str!(
+        "../../../circuits/fixtures/policy_tx_2_2_proof.json"
+    ))
+    .unwrap_or_else(|err| panic!("proof fixture should parse: {err}"));
+    let public_json: Value = serde_json::from_str(include_str!(
+        "../../../circuits/fixtures/policy_tx_2_2_public_inputs.json"
+    ))
+    .unwrap_or_else(|err| panic!("public input fixture should parse: {err}"));
+
+    let proof_hex = proof_json
+        .get("proofBytes")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("proof fixture should carry proofBytes"));
+    let proof_bytes = hex::decode(proof_hex.trim_start_matches("0x"))
+        .unwrap_or_else(|err| panic!("proofBytes should be hex: {err}"));
+    let proof = Groth16Proof::try_from(Bytes::from_slice(&env, &proof_bytes))
+        .unwrap_or_else(|_| panic!("proof fixture should decode into a Groth16 proof"));
+
+    let values = public_json
+        .get("values")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("public input fixture should carry values"));
+
+    let mut public_inputs: Vec<Bn254Fr> = Vec::new(&env);
+    for (index, value) in values.iter().enumerate() {
+        let decimal = value
+            .get("decimal")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("public input should carry a decimal"));
+        // Tamper with the pool root, the first public input.
+        let decimal = if index == 0 { "1" } else { decimal };
+        public_inputs.push_back(fr_from_decimal(&env, decimal));
+    }
+
+    let id = env.register(CircomGroth16Verifier, ());
+    let client = CircomGroth16VerifierClient::new(&env, &id);
+
+    assert!(client.try_verify(&proof, &public_inputs).is_err());
 }

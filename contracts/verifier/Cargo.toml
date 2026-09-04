@@ -25,6 +25,7 @@ ark-groth16 = { workspace = true }
 ark-relations = { workspace = true }
 ark-std = { workspace = true }
 hex = { workspace = true, features = ["std"] }
+num-bigint = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 soroban-utils = { workspace = true }
