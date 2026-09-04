@@ -8,6 +8,7 @@ members = [
     "contracts/pool",
     "contracts/verifier",
     "poseidon2",
+    "tools/policy-fixture",
 ]
 resolver = "3"
 
@@ -22,7 +23,7 @@ publish = false
 asp-membership = { path = "contracts/asp-membership" }
 anyhow = { version = "1", default-features = false }
 ark-bn254 = { version = "0.6.0", default-features = false, features = ["curve"] }
-ark-circom = { git = "https://github.com/NethermindEth/circom-compat.git", default-features = false, branch = "wasm-no-parallel" }
+ark-circom = { git = "https://github.com/NethermindEth/circom-compat.git", default-features = false, rev = "ef9b618ac64d2ecf4db4ed78150d43fb37905fb3" }
 ark-ec = { version = "0.6.0", default-features = false }
 ark-ff = { version = "0.6.0", default-features = false }
 ark-groth16 = { version = "0.6.0", default-features = false }
@@ -44,6 +45,12 @@ sha2 = { version = "0.11.0", default-features = false }
 soroban-utils = { path = "contracts/soroban-utils" }
 zkhash = { path = "poseidon2" }
 soroban-sdk = { version = "26", default-features = false, features = ["hazmat"] }
+
+[patch.crates-io]
+# `cranelift-control` 0.131 requires `arbitrary` 1.4, which conflicts with the
+# 1.3 that `soroban-sdk` pins. The vendored copy marks `arbitrary` optional
+# behind the unused `fuzz` feature, which lets both resolve.
+cranelift-control = { path = "vendor/cranelift-control" }
 
 [workspace.lints.rust]
 missing_docs = "allow"
