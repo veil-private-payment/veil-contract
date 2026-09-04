@@ -40,6 +40,10 @@ make fmt-check
 make check
 ```
 
+CI runs the same checks plus a wasm build, and separately compiles the circuit
+and settles a real proof through the contracts. See
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
 ## Testnet Deployment
 
 Deployed on the Stellar test network on 2026-09-04. Contract IDs and the

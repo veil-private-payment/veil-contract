@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  contracts:
+    name: Format, lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the channel, components and wasm targets.
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The policy-fixture integration test proves a circuit, which needs the
+      # compiled artifacts. The circuit job below covers it.
+      - name: Test
+        run: cargo test --workspace --exclude policy-fixture --locked
+
+      - name: Build contract wasm
+        run: cargo build --release --target wasm32v1-none -p pool -p asp-membership -p circom-groth16-verifier --locked
+
+  circuit:
+    name: Circuit and proof round trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Builds circom 2.2.3 into target/cargo-tools and fetches the pinned
+      # circomlib revision, then compiles the circuit to r1cs and witness WASM.
+      - name: Compile the policy circuit
+        run: |
+          ./scripts/install-circom.sh
+          ./scripts/compile-policy-circuit.sh
+
+      # Proves against the committed proving key and settles the proof through
+      # the pool, the ASP membership contract and the Groth16 verifier.
+      - name: Prove and settle
+        run: cargo test -p policy-fixture --locked
