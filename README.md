@@ -94,6 +94,18 @@ the double spend attempt: register, two deposits, two enrolments, an accepted
 spend and the rejected replay. Its contract IDs and hashes are under `demoRun`
 in the manifest.
 
+### Full Entrypoint Exercise
+
+A third contract set was driven through every entrypoint, 19 transactions, each
+outcome checked against Horizon. It covers key registration, six deposits, four
+enrolments, opening and closing the allowlist to non-admin enrolment, an
+accepted shielded spend, and admin repointing of the verifier and the allowlist.
+Two refusals were recorded on chain: a replayed nullifier and a duplicate
+commitment. Three more refusals never reach the ledger because simulation
+rejects them first: a deposit above the configured maximum, a zero-amount
+deposit, and a non-admin enrolment while the allowlist is admin-only. All of it
+is listed under `exerciseRun` in the manifest.
+
 Both rejections land on the ledger with `successful: false` and an
 `invoke_host_function: trapped` result. Simulation normally catches an invalid
 spend before submission, so recording a refusal on chain takes a signed
