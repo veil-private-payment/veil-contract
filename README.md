@@ -40,6 +40,28 @@ make fmt-check
 make check
 ```
 
+## Testnet Deployment
+
+Deployed on the Stellar test network on 2026-09-04. Contract IDs and the
+demonstration transaction hashes are in
+[`deployments/testnet.json`](deployments/testnet.json); the steps that produced
+them are in [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+| | |
+|---|---|
+| Pool | `CDYCEX7IXGNNJA4FAVV7WU5KS7RVBAA3RYDTZFOMDWDX36RYV7GWHFTD` |
+| ASP membership | `CDWJ6CBJFRAMAKPN46N2LJQNI4WN7DH6OP6CHZSQRABFEYAOTVENCTCG` |
+| Groth16 verifier | `CCH3JX7NPMNOR45KKWABCZEQUZ6QFQU4WHN6K3CVPTTG4JGSKH6YIQ6B` |
+
+Demonstration transactions on
+[Stellar Expert](https://stellar.expert/explorer/testnet):
+
+| Step | Transaction |
+|---|---|
+| Deposit | [`07d39287…`](https://stellar.expert/explorer/testnet/tx/07d392871ba89a18e2c893264e0c58f993599abf907341b7a873c70281b63a0b) |
+| ASP-gated spend with a real proof | [`2264cf72…`](https://stellar.expert/explorer/testnet/tx/2264cf725519d2647e5d18c0e9b1aa4d617523784942641649bdd3f9a9de0b33) |
+| Spend rejected by the allowlist gate | [`2e06159b…`](https://stellar.expert/explorer/testnet/tx/2e06159b2f40eefe1be4da3840cebc58995f1232986d6cdbfca0af7ae2d68827) |
+
 ## Circuit
 
 ```sh

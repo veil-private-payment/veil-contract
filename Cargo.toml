@@ -46,6 +46,20 @@ soroban-utils = { path = "contracts/soroban-utils" }
 zkhash = { path = "poseidon2" }
 soroban-sdk = { version = "26", default-features = false, features = ["hazmat"] }
 
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
+
 [patch.crates-io]
 # `cranelift-control` 0.131 requires `arbitrary` 1.4, which conflicts with the
 # 1.3 that `soroban-sdk` pins. The vendored copy marks `arbitrary` optional
