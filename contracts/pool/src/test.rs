@@ -969,3 +969,194 @@ fn get_ext_data_hash_matches_the_binding_hash() {
 
     assert_eq!(pool.get_ext_data_hash(&ext), compute_ext_hash(&env, &ext));
 }
+
+/// Build a pool on the mock verifier and a well-formed transaction whose
+/// external amount is `ext_amount`, with the pool funded so a withdrawal can
+/// actually pay out.
+fn mk_transact_case_with_amount(
+    env: &Env,
+    setup: &TestSetup,
+    fee_bps: u32,
+    ext_amount: i32,
+    pool_balance: i128,
+) -> (TransactCase, Address) {
+    let fee_recipient = Address::generate(env);
+    let pool_id = register_pool_with_fee(
+        env,
+        setup,
+        U256::from_u32(env, 1_000),
+        fee_recipient.clone(),
+        fee_bps,
+        8,
+    );
+    let pool = PoolContractClient::new(env, &pool_id);
+
+    if pool_balance > 0 {
+        StellarAssetClient::new(env, &setup.token).mint(&pool_id, &pool_balance);
+    }
+
+    let recipient = Address::generate(env);
+    let ext = mk_ext_data(env, recipient, ext_amount);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: pool.get_root(),
+        input_nullifiers: vec![env, U256::from_u32(env, 0x301), U256::from_u32(env, 0x302)],
+        output_commitment0: U256::from_u32(env, 0x401),
+        output_commitment1: U256::from_u32(env, 0x402),
+        public_amount: pool.get_public_amount(&ext.ext_amount),
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+
+    (
+        TransactCase {
+            pool_id,
+            sender: Address::generate(env),
+            ext,
+            proof,
+        },
+        fee_recipient,
+    )
+}
+
+#[test]
+fn transact_withdraws_the_full_amount_when_no_fee_is_configured() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let (case, fee_recipient) = mk_transact_case_with_amount(&env, &setup, 0, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let recipient = case.ext.recipient.clone();
+
+    pool.transact(&case.proof, &case.ext, &case.sender);
+
+    assert_eq!(token.balance(&recipient), 40);
+    assert_eq!(token.balance(&fee_recipient), 0);
+    assert_eq!(token.balance(&case.pool_id), 60);
+}
+
+#[test]
+fn transact_withdrawal_splits_the_protocol_fee() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    // 250 bps of 40 is 1, leaving 39 for the recipient.
+    let (case, fee_recipient) = mk_transact_case_with_amount(&env, &setup, 250, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let recipient = case.ext.recipient.clone();
+
+    pool.transact(&case.proof, &case.ext, &case.sender);
+
+    assert_eq!(token.balance(&recipient), 39);
+    assert_eq!(token.balance(&fee_recipient), 1);
+    assert_eq!(token.balance(&case.pool_id), 60);
+}
+
+#[test]
+fn transact_rejects_a_withdrawal_the_pool_cannot_cover() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let (case, _fee_recipient) = mk_transact_case_with_amount(&env, &setup, 0, -40, 10);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    let recipient = case.ext.recipient.clone();
+    let nullifier0 = case.proof.input_nullifiers.get_unchecked(0);
+
+    assert!(
+        pool.try_transact(&case.proof, &case.ext, &case.sender)
+            .is_err()
+    );
+
+    assert_eq!(token.balance(&recipient), 0);
+    assert_eq!(token.balance(&case.pool_id), 10);
+    assert!(!pool.has_nullifier(&nullifier0));
+    assert!(!pool.has_commitment(&case.proof.output_commitment0));
+}
+
+#[test]
+fn transact_takes_a_deposit_through_the_single_entrypoint() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let (case, _fee_recipient) = mk_transact_case_with_amount(&env, &setup, 0, 25, 0);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+
+    StellarAssetClient::new(&env, &setup.token).mint(&case.sender, &100);
+
+    pool.transact(&case.proof, &case.ext, &case.sender);
+
+    assert_eq!(token.balance(&case.sender), 75);
+    assert_eq!(token.balance(&case.pool_id), 25);
+    assert!(pool.has_commitment(&case.proof.output_commitment0));
+}
+
+/// Every admin entrypoint is gated on the stored admin address.
+///
+/// The pool is built with authorizations mocked, then all authorizations are
+/// dropped so the calls below carry no signature at all.
+#[test]
+fn admin_entrypoints_reject_unauthorized_callers() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let outsider = Address::generate(&env);
+
+    env.set_auths(&[]);
+
+    assert!(pool.try_update_admin(&outsider).is_err());
+    assert!(pool.try_update_verifier(&outsider).is_err());
+    assert!(pool.try_update_asp_membership(&outsider).is_err());
+    assert!(
+        pool.try_upgrade(&BytesN::from_array(&env, &[9u8; 32]))
+            .is_err()
+    );
+}
+
+/// The admin surface stays intact after a refused call.
+#[test]
+fn a_refused_admin_call_changes_nothing() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let before = pool.get_config();
+    let outsider = Address::generate(&env);
+
+    env.set_auths(&[]);
+    assert!(pool.try_update_verifier(&outsider).is_err());
+
+    let after = pool.get_config();
+    assert_eq!(after.admin, before.admin);
+    assert_eq!(after.verifier, before.verifier);
+    assert_eq!(after.asp_membership, before.asp_membership);
+}
+
+/// Deposit and transact require the funding account's own authorization.
+#[test]
+fn deposit_and_transact_reject_unauthorized_senders() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_transact_case(&env, &setup);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let sender = Address::generate(&env);
+    StellarAssetClient::new(&env, &setup.token).mint(&sender, &100);
+
+    env.set_auths(&[]);
+
+    assert!(
+        pool.try_deposit(&sender, &10, &U256::from_u32(&env, 0xFEED))
+            .is_err()
+    );
+    assert!(
+        pool.try_transact(&case.proof, &case.ext, &case.sender)
+            .is_err()
+    );
+}

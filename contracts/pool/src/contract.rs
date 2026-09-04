@@ -248,6 +248,16 @@ impl PoolContract {
         Self::hash_ext_data(env, &ext_data)
     }
 
+    /// Return the field-encoded public amount `transact` expects for a given
+    /// external amount.
+    ///
+    /// Deposits encode directly; withdrawals encode as `FIELD_SIZE - amount`.
+    /// Clients call this view so the public amount in the proof matches what
+    /// the pool will compute from `ExtData`.
+    pub fn get_public_amount(env: &Env, ext_amount: I256) -> Result<U256, ContractError> {
+        Self::calculate_public_amount(env, ext_amount)
+    }
+
     /// Get the current Merkle root from the ASP Membership contract
     ///
     /// Makes a cross-contract call to retrieve the current root of the
