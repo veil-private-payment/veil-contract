@@ -61,7 +61,6 @@ impl PoolContract {
     /// * `fee_bps` - Protocol fee in basis points (0-10_000)
     /// * `levels` - Number of levels in the commitment Merkle tree (1-32)
     ///
-    /// The MVP keeps paused defaulted to false at deploy time.
     ///
     /// # Returns
     ///
@@ -89,7 +88,6 @@ impl PoolContract {
         storage::set_maximum_deposit(&env, &maximum_deposit_amount);
         storage::set_fee_recipient(&env, &fee_recipient);
         storage::set_fee_bps(&env, fee_bps);
-        storage::set_paused(&env, false);
         storage::set_nullifiers(&env, &Map::<U256, bool>::new(&env));
         storage::set_commitments(&env, &Map::<U256, bool>::new(&env));
 
@@ -222,7 +220,6 @@ impl PoolContract {
             maximum_deposit_amount: storage::get_maximum_deposit(env)?,
             fee_recipient: storage::get_fee_recipient(env)?,
             fee_bps: storage::get_fee_bps(env)?,
-            paused: storage::is_paused(env)?,
         })
     }
 

@@ -119,21 +119,6 @@ pub(crate) fn set_fee_bps(env: &Env, fee_bps: u32) {
     env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
 }
 
-// ========== Paused flag ==========
-
-/// Get the global pool pause flag
-pub(crate) fn is_paused(env: &Env) -> Result<bool, ContractError> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Paused)
-        .ok_or(ContractError::NotInitialized)
-}
-
-/// Save the global pool pause flag
-pub(crate) fn set_paused(env: &Env, paused: bool) {
-    env.storage().persistent().set(&DataKey::Paused, &paused);
-}
-
 // ========== Admin ==========
 
 /// Return whether an admin address has been stored

@@ -79,6 +79,4 @@ pub struct PoolConfig {
     pub fee_recipient: Address,
     /// Protocol fee in basis points
     pub fee_bps: u32,
-    /// Whether state-changing pool operations are paused
-    pub paused: bool,
 }

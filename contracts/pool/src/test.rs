@@ -283,12 +283,6 @@ fn pool_constructor_sets_state_and_config_view() {
             .get(&crate::storage_types::DataKey::Admin)
             .unwrap_or_else(|| panic!("expected admin to be stored"))
     });
-    let stored_paused: bool = env.as_contract(&pool_id, || {
-        env.storage()
-            .persistent()
-            .get(&crate::storage_types::DataKey::Paused)
-            .unwrap_or_else(|| panic!("expected paused flag to be stored"))
-    });
     let has_nullifiers = env.as_contract(&pool_id, || {
         env.storage()
             .persistent()
@@ -306,7 +300,6 @@ fn pool_constructor_sets_state_and_config_view() {
     });
 
     assert_eq!(stored_admin, setup.admin);
-    assert!(!stored_paused);
     assert!(has_nullifiers);
     assert!(has_commitments);
     assert!(has_merkle_root);
@@ -319,7 +312,6 @@ fn pool_constructor_sets_state_and_config_view() {
     assert_eq!(config.maximum_deposit_amount, max);
     assert_eq!(config.fee_recipient, setup.admin);
     assert_eq!(config.fee_bps, 0);
-    assert!(!config.paused);
 
     let _root = pool.get_root();
 }
@@ -339,7 +331,6 @@ fn pool_constructor_accepts_custom_fee_config() {
     assert_eq!(config.maximum_deposit_amount, max);
     assert_eq!(config.fee_recipient, fee_recipient);
     assert_eq!(config.fee_bps, fee_bps);
-    assert!(!config.paused);
 }
 
 #[test]

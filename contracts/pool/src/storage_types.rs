@@ -31,6 +31,4 @@ pub(crate) enum DataKey {
     FeeRecipient,
     /// Protocol fee in basis points
     FeeBps,
-    /// Global pause flag for state-changing pool operations
-    Paused,
 }
