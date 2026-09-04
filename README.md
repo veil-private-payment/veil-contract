@@ -41,6 +41,29 @@ no nullifier has been spent before. The circuit binds the spender's key to the
 allowlist, so a spender who is not enrolled cannot satisfy both the membership
 constraint and the live root.
 
+## Authorization Model
+
+The pool has one admin address, set at construction. Only that address can
+rotate the admin, repoint the verifier or the allowlist, or upgrade the
+contract wasm, and all four are covered by tests that drop every authorization
+and assert the call is refused. Deposits and spends require the funding
+account's own signature. There is no operator role and no mint allowance: an
+address is either the admin or an ordinary user.
+
+The allowlist contract has its own admin. By default only that admin may enrol
+a key; `set_admin_insert_only(false)` opens enrolment to anyone, which is
+useful on testnet.
+
+## Client Views
+
+Two views exist so a client can build a proof the pool will accept, rather than
+reimplementing the pool's encoding and hoping it matches:
+
+| View | Returns |
+|---|---|
+| `get_ext_data_hash(ext_data)` | the binding hash the proof must carry |
+| `get_public_amount(ext_amount)` | the field encoding of a deposit or withdrawal amount |
+
 ## Requirements
 
 - Rust toolchain pinned in `rust-toolchain.toml`
