@@ -153,6 +153,20 @@ pub fn generate() -> Result<Fixture> {
 /// compute it there and pass it in here so the resulting proof satisfies the
 /// pool's external data check.
 pub fn generate_with_ext_data_hash(ext_data_hash: [u8; 32]) -> Result<Fixture> {
+    generate_with_ext_data_hash_and_amount(ext_data_hash, 0)
+}
+
+/// Same as [`generate_with_ext_data_hash`], but for a transaction that also
+/// moves value publicly.
+///
+/// A negative `ext_amount` is a withdrawal: the circuit enforces
+/// `sumIns + publicAmount == sumOuts`, so the shielded output is reduced by the
+/// amount leaving the pool, and `publicAmount` is the field encoding of the
+/// negative value, matching what the pool computes from `ExtData`.
+pub fn generate_with_ext_data_hash_and_amount(
+    ext_data_hash: [u8; 32],
+    ext_amount: i64,
+) -> Result<Fixture> {
     let ext_data_hash = scalar_from_be_bytes(&ext_data_hash);
     let repo_root = repo_root()?;
     let artifact_dir = repo_root.join("target/circuits-artifacts/manual");
@@ -165,7 +179,7 @@ pub fn generate_with_ext_data_hash(ext_data_hash: [u8; 32]) -> Result<Fixture> {
         "compiled circuit artifacts are missing; run `make compile-policy-circuit` first"
     );
 
-    let policy_inputs = build_policy_inputs(ext_data_hash)?;
+    let policy_inputs = build_policy_inputs(ext_data_hash, ext_amount)?;
     let proof_result = prove_and_verify(&wasm_path, &r1cs_path, &proving_key_path, &policy_inputs)?;
 
     Ok(Fixture {
@@ -301,7 +315,7 @@ fn prove_and_verify(
     })
 }
 
-fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
+fn build_policy_inputs(ext_data_hash: Scalar, ext_amount: i64) -> Result<PolicyInputs> {
     let inputs = [
         InputNote {
             leaf_index: 0,
@@ -319,11 +333,30 @@ fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
             amount: Scalar::from(13u64),
         },
     ];
+    // The only funded input note carries 13. A withdrawal takes value out of
+    // the shielded set, so the funded output carries the remainder.
+    let shielded_in: i64 = 13;
+    let funded_out = shielded_in
+        .checked_add(ext_amount)
+        .context("external amount overflows the note total")?;
+    ensure!(
+        funded_out >= 0,
+        "withdrawal of {} exceeds the {} held by the input notes",
+        -ext_amount,
+        shielded_in
+    );
+    let public_amount = if ext_amount >= 0 {
+        Scalar::from(u64::try_from(ext_amount).unwrap_or_default())
+    } else {
+        let magnitude = u64::try_from(-ext_amount).unwrap_or_default();
+        Scalar::zero() - Scalar::from(magnitude)
+    };
+
     let outputs = [
         OutputNote {
             public_key: Scalar::from(501u64),
             blinding: Scalar::from(601u64),
-            amount: Scalar::from(13u64),
+            amount: Scalar::from(u64::try_from(funded_out).unwrap_or_default()),
         },
         OutputNote {
             public_key: Scalar::from(502u64),
@@ -396,7 +429,7 @@ fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
 
     let mut records = Vec::new();
     push_scalar(&mut records, "root", root);
-    push_scalar(&mut records, "publicAmount", Scalar::zero());
+    push_scalar(&mut records, "publicAmount", public_amount);
     push_scalar(&mut records, "extDataHash", ext_data_hash);
     push_scalars(&mut records, "inputNullifier", &nullifiers);
     push_scalars(
@@ -485,7 +518,6 @@ fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
     // Nested, circom/snarkjs-compatible input.json (signal names match the
     // `policy_tx_2_2` main component, buses as nested objects).
     let dec = |value: Scalar| scalar_to_bigint(value).to_string();
-    let zero_dec = "0".to_string();
     let membership_proofs_json = (0..inputs.len())
         .map(|i| {
             let leaf = poseidon2_hash2(public_keys[i], membership_blinding, Some(Scalar::from(1u64)));
@@ -499,7 +531,7 @@ fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
         .collect::<Vec<_>>();
     let input_json = json!({
         "root": dec(root),
-        "publicAmount": zero_dec.clone(),
+        "publicAmount": dec(public_amount),
         "extDataHash": dec(ext_data_hash),
         "inputNullifier": nullifiers.iter().map(|v| dec(*v)).collect::<Vec<_>>(),
         "outputCommitment": outputs.iter()
@@ -525,7 +557,7 @@ fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
         "levels": LEVELS,
         "proofRngSeed": PROOF_RNG_SEED,
         "root": scalar_json(root),
-        "publicAmount": scalar_json(Scalar::zero()),
+        "publicAmount": scalar_json(public_amount),
         "extDataHash": scalar_json(ext_data_hash),
         "inputNullifiers": nullifiers.iter().map(|v| scalar_json(*v)).collect::<Vec<_>>(),
         "outputCommitments": outputs.iter()

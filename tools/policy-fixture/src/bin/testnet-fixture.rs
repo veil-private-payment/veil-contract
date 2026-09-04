@@ -5,9 +5,12 @@
 //! from `get_ext_data_hash`. Pass that hex string here and this writes every
 //! value the deploy script feeds back to the contracts.
 //!
-//! Usage: cargo run -p policy-fixture --bin testnet-fixture -- <ext_data_hash_hex>
+//! An optional second argument is the external amount: negative withdraws that
+//! many tokens from the pool, zero is a pure shielded transfer.
+//!
+//! Usage: cargo run -p policy-fixture --bin testnet-fixture -- <ext_data_hash_hex> [ext_amount]
 use anyhow::{Context, Result, ensure};
-use policy_fixture::generate_with_ext_data_hash;
+use policy_fixture::generate_with_ext_data_hash_and_amount;
 use serde_json::json;
 
 fn main() -> Result<()> {
@@ -20,7 +23,15 @@ fn main() -> Result<()> {
     let mut ext_data_hash = [0u8; 32];
     ext_data_hash.copy_from_slice(&raw);
 
-    let fixture = generate_with_ext_data_hash(ext_data_hash)?;
+    let ext_amount: i64 = match std::env::args().nth(2) {
+        Some(raw) => raw
+            .trim()
+            .parse()
+            .context("external amount must be an integer")?,
+        None => 0,
+    };
+
+    let fixture = generate_with_ext_data_hash_and_amount(ext_data_hash, ext_amount)?;
     let public = fixture.public_inputs_be();
     ensure!(public.len() == 9, "expected 9 public inputs");
 
@@ -28,6 +39,7 @@ fn main() -> Result<()> {
 
     let out = json!({
         "extDataHash": hex::encode(ext_data_hash),
+        "extAmount": ext_amount,
         "proofHex": hex::encode(fixture.proof_bytes()),
         "inputCommitments": fixture.input_commitments().iter().map(to_dec).collect::<Vec<_>>(),
         "membershipLeaves": fixture.membership_leaves().iter().map(to_dec).collect::<Vec<_>>(),

@@ -117,6 +117,20 @@ the double spend attempt: register, two deposits, two enrolments, an accepted
 spend and the rejected replay. Its contract IDs and hashes are under `demoRun`
 in the manifest.
 
+### Withdrawal With A Real Proof
+
+A separate pool configured with a 1000 bps protocol fee recorded a withdrawal
+of 10 stroops carrying a real proof:
+[`12766d49…`](https://stellar.expert/explorer/testnet/tx/12766d4903289db15c5971fe1e10bb88d2bd4db0c287600773c0cc64b49692a1).
+The pool paid 9 to the recipient and 1 to the fee recipient, and the settlement
+event records the external amount as `-10`.
+
+The circuit enforces `sumIns + publicAmount == sumOuts`, so a withdrawal
+shrinks the shielded output by the amount leaving the pool. The pool derives the
+same public amount from `ExtData` through `get_public_amount`, and the proof
+verifies only if the two agree. Both sides were checked against each other
+before the spend was submitted.
+
 ### Full Entrypoint Exercise
 
 A third contract set was driven through every entrypoint, 19 transactions, each

@@ -98,6 +98,28 @@ stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet 
      --sender <ADMIN>
 ```
 
+## 6b. Withdrawals
+
+Pass the external amount to the fixture generator as a second argument. A
+negative value withdraws:
+
+```sh
+stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet \
+  -- get_ext_data_hash --ext_data '{ "encrypted_output0": "", "encrypted_output1": "", "ext_amount": "-10", "recipient": "<RECIPIENT>" }'
+
+cargo run -p policy-fixture --bin testnet-fixture -- <EXT_DATA_HASH_HEX> -10
+```
+
+Check the encoding matches what the pool expects before submitting:
+
+```sh
+stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet \
+  -- get_public_amount --ext_amount=-10
+```
+
+That value must equal `publicAmount` in the generated fixture. The pool must
+also hold enough of the token to cover the payout and the protocol fee.
+
 ## 7. The Rejected Spend
 
 The allowlist gate refuses a spend whose ASP membership root is not the live
