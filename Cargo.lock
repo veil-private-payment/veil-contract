@@ -2366,10 +2366,15 @@ dependencies = [
  "ark-serialize 0.6.0",
  "ark-snark",
  "ark-std 0.6.0",
+ "asp-membership",
+ "circom-groth16-verifier",
  "circuit-keys",
+ "contract-types",
  "hex",
  "num-bigint",
+ "pool",
  "serde_json",
+ "soroban-sdk",
  "zkhash",
 ]
 

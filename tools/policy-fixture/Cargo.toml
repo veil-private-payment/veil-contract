@@ -23,3 +23,10 @@ hex = { workspace = true, features = ["std"] }
 num-bigint = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 zkhash = { workspace = true }
+
+[dev-dependencies]
+asp-membership = { workspace = true }
+circom-groth16-verifier = { workspace = true }
+contract-types = { workspace = true }
+pool = { workspace = true }
+soroban-sdk = { workspace = true, features = ["testutils"] }

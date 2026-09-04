@@ -7,7 +7,7 @@ use ark_serialize::CanonicalDeserialize;
 use ark_snark::SNARK;
 use ark_std::rand::{SeedableRng, rngs::StdRng};
 use circuit_keys::{g1_to_soroban_bytes, g2_to_soroban_bytes};
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File},
@@ -28,6 +28,21 @@ use zkhash::{
 const CIRCUIT_NAME: &str = "policy_tx_2_2";
 const LEVELS: usize = 10;
 const PROOF_RNG_SEED: u64 = 20_260_612;
+
+/// Value the contracts use for an unfilled Merkle leaf.
+///
+/// The pool and the ASP membership contract seed empty subtrees with this
+/// constant rather than with zero, so a fixture that pads with zero computes a
+/// different root than the live tree. See `soroban_utils::get_zeroes`.
+const EMPTY_LEAF_DECIMAL: &str =
+    "16820622405745174042249830601237189755928192602553897283642901160942722677198";
+
+fn empty_leaf() -> Scalar {
+    let value = EMPTY_LEAF_DECIMAL
+        .parse::<BigUint>()
+        .unwrap_or_else(|err| panic!("empty leaf constant should parse: {err}"));
+    Scalar::from(value)
+}
 
 const PUBLIC_INPUT_NAMES: [&str; 9] = [
     "root",
@@ -60,6 +75,8 @@ struct PolicyInputs {
     values: Vec<(String, Vec<BigInt>)>,
     witness_json: Value,
     input_json: Value,
+    input_commitments: Vec<[u8; 32]>,
+    membership_leaves: Vec<[u8; 32]>,
 }
 
 /// A generated `policy_tx_2_2` fixture: the Groth16 proof plus its public inputs.
@@ -76,12 +93,67 @@ pub struct Fixture {
     policy_inputs: PolicyInputs,
 }
 
+impl Fixture {
+    /// Commitments of the input notes, in pool leaf order.
+    ///
+    /// Depositing these in order rebuilds the pool Merkle tree the proof was
+    /// generated against.
+    pub fn input_commitments(&self) -> &[[u8; 32]] {
+        &self.policy_inputs.input_commitments
+    }
+
+    /// ASP membership leaves, in enrollment order.
+    ///
+    /// Inserting these into the membership contract in order reproduces the
+    /// membership root the proof was generated against.
+    pub fn membership_leaves(&self) -> &[[u8; 32]] {
+        &self.policy_inputs.membership_leaves
+    }
+
+    /// Public inputs in circuit order, big-endian encoded.
+    pub fn public_inputs_be(&self) -> Vec<[u8; 32]> {
+        self.public_inputs.iter().map(fr_to_be_bytes).collect()
+    }
+
+    /// The proof in the byte layout the Soroban verifier expects.
+    pub fn proof_bytes(&self) -> Vec<u8> {
+        proof_bytes(&self.proof.a, &self.proof.b, &self.proof.c)
+    }
+}
+
+/// Read a big-endian 32-byte value as a field element.
+pub fn scalar_from_be_bytes(bytes: &[u8; 32]) -> Scalar {
+    let value = BigUint::from_bytes_be(bytes);
+    Scalar::from(value)
+}
+
+/// Big-endian 32-byte encoding of a field element.
+pub fn fr_to_be_bytes(value: &Fr) -> [u8; 32] {
+    let bytes = value.into_bigint().to_bytes_be();
+    let mut buf = [0u8; 32];
+    let offset = buf.len().saturating_sub(bytes.len());
+    buf[offset..].copy_from_slice(&bytes);
+    buf
+}
+
 /// Generate the deterministic `policy_tx_2_2` proof in memory.
 ///
 /// Loads the compiled circuit artifacts + proving key, builds the witness, and
 /// produces a Groth16 proof. Does not touch the fixture files; use
 /// [`write_fixture_files`] for that.
 pub fn generate() -> Result<Fixture> {
+    generate_with_ext_data_hash([0u8; 32])
+}
+
+/// Same as [`generate`], but binds the proof to a caller-supplied
+/// `extDataHash`.
+///
+/// The pool derives that hash from the XDR encoding of its own `ExtData`
+/// struct, which only a Soroban environment can produce. Contract tests
+/// compute it there and pass it in here so the resulting proof satisfies the
+/// pool's external data check.
+pub fn generate_with_ext_data_hash(ext_data_hash: [u8; 32]) -> Result<Fixture> {
+    let ext_data_hash = scalar_from_be_bytes(&ext_data_hash);
     let repo_root = repo_root()?;
     let artifact_dir = repo_root.join("target/circuits-artifacts/manual");
     let wasm_path = artifact_dir.join("policy_tx_2_2_js/policy_tx_2_2.wasm");
@@ -93,7 +165,7 @@ pub fn generate() -> Result<Fixture> {
         "compiled circuit artifacts are missing; run `make compile-policy-circuit` first"
     );
 
-    let policy_inputs = build_policy_inputs()?;
+    let policy_inputs = build_policy_inputs(ext_data_hash)?;
     let proof_result = prove_and_verify(&wasm_path, &r1cs_path, &proving_key_path, &policy_inputs)?;
 
     Ok(Fixture {
@@ -229,7 +301,7 @@ fn prove_and_verify(
     })
 }
 
-fn build_policy_inputs() -> Result<PolicyInputs> {
+fn build_policy_inputs(ext_data_hash: Scalar) -> Result<PolicyInputs> {
     let inputs = [
         InputNote {
             leaf_index: 0,
@@ -261,7 +333,7 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
     ];
 
     let leaf_count = leaf_count(LEVELS)?;
-    let mut tx_leaves = vec![Scalar::zero(); leaf_count];
+    let mut tx_leaves = vec![empty_leaf(); leaf_count];
     let mut public_keys = Vec::with_capacity(inputs.len());
     let mut input_commitments = Vec::with_capacity(inputs.len());
 
@@ -274,6 +346,12 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
         let public_key = derive_public_key(note.private_key);
         let cm = commitment(note.amount, public_key, note.blinding);
         tx_leaves[note.leaf_index] = cm;
+        // `deposit` inserts a two-leaf batch of (commitment, zero), so the leaf
+        // paired with a deposited commitment holds a literal zero rather than
+        // the empty-leaf constant used for subtrees that were never touched.
+        if let Some(pair_slot) = tx_leaves.get_mut(note.leaf_index.saturating_add(1)) {
+            *pair_slot = Scalar::zero();
+        }
         public_keys.push(public_key);
         input_commitments.push(cm);
     }
@@ -302,7 +380,7 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
         path_elements_flat.extend(path_elements);
     }
 
-    let mut membership_leaves = vec![Scalar::zero(); leaf_count];
+    let mut membership_leaves = vec![empty_leaf(); leaf_count];
     let membership_blinding = Scalar::zero();
     // The ASP tree is enrolled independently of the pool tree: the membership
     // contract appends one leaf per enrollment, so slot order is what a live
@@ -319,7 +397,7 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
     let mut records = Vec::new();
     push_scalar(&mut records, "root", root);
     push_scalar(&mut records, "publicAmount", Scalar::zero());
-    push_scalar(&mut records, "extDataHash", Scalar::zero());
+    push_scalar(&mut records, "extDataHash", ext_data_hash);
     push_scalars(&mut records, "inputNullifier", &nullifiers);
     push_scalars(
         &mut records,
@@ -422,7 +500,7 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
     let input_json = json!({
         "root": dec(root),
         "publicAmount": zero_dec.clone(),
-        "extDataHash": zero_dec.clone(),
+        "extDataHash": dec(ext_data_hash),
         "inputNullifier": nullifiers.iter().map(|v| dec(*v)).collect::<Vec<_>>(),
         "outputCommitment": outputs.iter()
             .map(|note| dec(commitment(note.amount, note.public_key, note.blinding)))
@@ -448,7 +526,7 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
         "proofRngSeed": PROOF_RNG_SEED,
         "root": scalar_json(root),
         "publicAmount": scalar_json(Scalar::zero()),
-        "extDataHash": scalar_json(Scalar::zero()),
+        "extDataHash": scalar_json(ext_data_hash),
         "inputNullifiers": nullifiers.iter().map(|v| scalar_json(*v)).collect::<Vec<_>>(),
         "outputCommitments": outputs.iter()
             .map(|note| scalar_json(commitment(note.amount, note.public_key, note.blinding)))
@@ -474,10 +552,22 @@ fn build_policy_inputs() -> Result<PolicyInputs> {
         }).collect::<Vec<_>>(),
     });
 
+    let input_commitment_bytes = input_commitments
+        .iter()
+        .map(|value| scalar_to_be_bytes(*value))
+        .collect::<Vec<_>>();
+    let membership_leaf_bytes = membership_leaves
+        .iter()
+        .take(inputs.len())
+        .map(|value| scalar_to_be_bytes(*value))
+        .collect::<Vec<_>>();
+
     Ok(PolicyInputs {
         values: records,
         witness_json,
         input_json,
+        input_commitments: input_commitment_bytes,
+        membership_leaves: membership_leaf_bytes,
     })
 }
 
@@ -614,6 +704,14 @@ fn merkle_proof(leaves: &[Scalar], mut index: usize) -> Result<(Vec<Scalar>, u64
     }
 
     Ok((path_elements, path_indices, levels))
+}
+
+fn scalar_to_be_bytes(value: Scalar) -> [u8; 32] {
+    let bytes = value.into_bigint().to_bytes_be();
+    let mut buf = [0u8; 32];
+    let offset = buf.len().saturating_sub(bytes.len());
+    buf[offset..].copy_from_slice(&bytes);
+    buf
 }
 
 fn scalar_to_bigint(value: Scalar) -> BigInt {
