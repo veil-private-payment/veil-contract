@@ -28,7 +28,9 @@
     "faucetOnboard0": "04d3958a664723c4f64b3250cd59427a2ca2de47393a993e2936283fea8bde40",
     "deposit1": "7f5886c734974234abc17fda983edea9e872a13e7614e0b1c9b1f40bd3c960d1",
     "faucetOnboard1": "cd3bbdc42f00ff9e3311fab913b0c27d090a38f938bae9c91a9e7898a1efd09a",
-    "spendAccepted": "64afcf21c7adbd1bd144db3b978da85a1a510d1785a8ac39c193ed3b0766f428"
+    "spendAccepted": "64afcf21c7adbd1bd144db3b978da85a1a510d1785a8ac39c193ed3b0766f428",
+    "poolExitUpgradeUpload": "a73109accb367d7764c1bbff8ef31d9748f7b5885d55968f86ecafbc00cb0fd5",
+    "poolExitUpgrade": "72c8983a1d4f307dd882c7b0755372a5b762446b309cc04241a39ef15c1522a2"
   },
   "supersededDepth10Deployment": {
     "network": "Test SDF Network ; September 2015",
@@ -205,5 +207,7 @@
         }
       ]
     }
-  }
+  },
+  "poolWasmHash": "179289800a9f0eebdabc58ee295577214a253360e383acdbd3582bee91dfabde",
+  "poolUpgradeNote": "the deployed pool was upgraded on 2026-09-14 to add `exit`, the entrypoint that spends out of a pool whose tree is full; `is_tree_full` and `remaining_leaves` report which path applies"
 }

@@ -158,6 +158,40 @@ stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet 
 That value must equal `publicAmount` in the generated fixture. The pool must
 also hold enough of the token to cover the payout and the protocol fee.
 
+## 6c. Leaving A Full Pool
+
+Every transaction writes two output commitments, so `transact` stops working
+once the tree fills, and withdrawals go through `transact`. `exit` is the way
+out: the same checks, the recipient is paid, and the transaction's output notes
+are discarded rather than inserted.
+
+Check which entrypoint applies before building a proof:
+
+```sh
+stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet \
+  -- is_tree_full
+
+stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet \
+  -- remaining_leaves
+```
+
+While `remaining_leaves` is above one, `exit` is refused and `transact` is the
+right call. Once the tree is full, build the withdrawal exactly as in 6b and
+invoke `exit` in place of `transact`. Anything the proof assigns to the output
+notes is destroyed, so the inputs must be spent in full and the whole value
+withdrawn. Two notes go per call, which is enough to drain any holding.
+
+The deployed pool was upgraded to this wasm on 2026-09-14:
+
+| Step | Transaction |
+|---|---|
+| Upload `pool` wasm `179289800a9f…` | [`a73109ac…`](https://stellar.expert/explorer/testnet/tx/a73109accb367d7764c1bbff8ef31d9748f7b5885d55968f86ecafbc00cb0fd5) |
+| `upgrade` on the pool | [`72c8983a…`](https://stellar.expert/explorer/testnet/tx/72c8983a1d4f307dd882c7b0755372a5b762446b309cc04241a39ef15c1522a2) |
+
+The upgrade is verified by the views answering on the live contract:
+`is_tree_full` returns `false` and `remaining_leaves` returns `65530`, six
+leaves having been used by the three inserts recorded above.
+
 ## 7. The Rejected Spend
 
 The allowlist gate refuses a spend whose ASP membership root is not the live
