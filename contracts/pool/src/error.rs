@@ -36,6 +36,8 @@ pub enum ContractError {
     AlreadyInsertedCommitment = 14,
     /// A proof, nullifier, commitment, root, or ASP value is outside BN254
     InvalidFieldElement = 15,
+    /// The exit path was used while the tree still has room for a normal spend
+    TreeNotFull = 16,
 }
 
 /// Conversion from MerkleTreeWithHistory errors to pool contract errors

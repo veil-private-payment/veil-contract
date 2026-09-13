@@ -1,7 +1,10 @@
 #![allow(clippy::too_many_arguments)]
 use crate::{
     error::ContractError,
-    event::{DepositEvent, NewCommitmentEvent, NewNullifierEvent, PublicKeyEvent, SettlementEvent},
+    event::{
+        DepositEvent, ExitEvent, NewCommitmentEvent, NewNullifierEvent, PublicKeyEvent,
+        SettlementEvent,
+    },
     merkle_with_history::MerkleTreeWithHistory,
     storage,
     storage_types::{DataKey, MAX_FEE_BPS},
@@ -203,12 +206,62 @@ impl PoolContract {
             token_client.transfer(&sender, &this, &amount);
         }
 
-        Self::internal_transact(env, proof, ext_data)
+        Self::settle(env, proof, ext_data, true)
+    }
+
+    /// Spend notes out of a full pool, forfeiting the transaction's outputs
+    ///
+    /// `transact` writes two output commitments for every transaction, so a
+    /// full tree closes the only route out of the pool and strands every note
+    /// still in it. This entrypoint is that route: it runs the same proof and
+    /// nullifier checks, pays the recipient, and then discards the outputs
+    /// instead of inserting them.
+    ///
+    /// Anything the proof assigns to those outputs is destroyed, so a caller
+    /// must spend the inputs in full and withdraw the whole value. Two notes
+    /// can be drained per call, which is enough for any holder to empty a full
+    /// pool. The pool can only pay out less than it took in this way, never
+    /// more.
+    ///
+    /// Deliberately restricted to a full tree and to withdrawals: while
+    /// `transact` still works it is strictly better, and a deposit made here
+    /// would be burned on arrival.
+    pub fn exit(
+        env: &Env,
+        proof: Proof,
+        ext_data: ExtData,
+        sender: Address,
+    ) -> Result<(), ContractError> {
+        sender.require_auth();
+
+        if !MerkleTreeWithHistory::is_full(env)? {
+            return Err(ContractError::TreeNotFull);
+        }
+        let zero = I256::from_i32(env, 0);
+        if ext_data.ext_amount >= zero {
+            return Err(ContractError::WrongExtAmount);
+        }
+
+        Self::settle(env, proof, ext_data, false)
     }
 
     // ======================================================================
     // Read-only views
     // ======================================================================
+
+    /// Whether the tree can still take a transaction's two output commitments
+    ///
+    /// False means `transact` is closed and `exit` is the only way out. A
+    /// client should check this before building a proof, because the answer
+    /// decides which entrypoint the proof is for.
+    pub fn is_tree_full(env: &Env) -> Result<bool, ContractError> {
+        Ok(MerkleTreeWithHistory::is_full(env)?)
+    }
+
+    /// Leaves still free in the tree, two per transaction
+    pub fn remaining_leaves(env: &Env) -> Result<u64, ContractError> {
+        Ok(MerkleTreeWithHistory::remaining_leaves(env)?)
+    }
 
     /// Get the latest root of the Merkle tree that defines the pool
     pub fn get_root(env: &Env) -> Result<U256, ContractError> {
@@ -406,7 +459,17 @@ impl PoolContract {
     ///
     /// Validates the proof and all public inputs, marks nullifiers as spent,
     /// processes withdrawals, and inserts new commitments into the Merkle tree.
-    fn internal_transact(env: &Env, proof: Proof, ext_data: ExtData) -> Result<(), ContractError> {
+    ///
+    /// `insert_outputs` is false only on the exit path, where the tree is full
+    /// and the outputs are discarded. The checks that guard the pool (root,
+    /// nullifiers, ext hash, public amount, ASP root, proof) run either way;
+    /// only the bookkeeping for notes that will exist differs.
+    fn settle(
+        env: &Env,
+        proof: Proof,
+        ext_data: ExtData,
+        insert_outputs: bool,
+    ) -> Result<(), ContractError> {
         Self::ensure_proof_field_elements(env, &proof)?;
 
         // 1. Merkle root check
@@ -441,10 +504,15 @@ impl PoolContract {
             return Err(ContractError::InvalidProof);
         }
 
-        Self::ensure_commitment_unused(env, &proof.output_commitment0)?;
-        Self::ensure_commitment_unused(env, &proof.output_commitment1)?;
-        if proof.output_commitment0 == proof.output_commitment1 {
-            return Err(ContractError::AlreadyInsertedCommitment);
+        // Only meaningful for notes that will be spendable. On the exit path
+        // the outputs go nowhere, so a collision with an existing commitment
+        // costs nothing and must not block a holder from leaving.
+        if insert_outputs {
+            Self::ensure_commitment_unused(env, &proof.output_commitment0)?;
+            Self::ensure_commitment_unused(env, &proof.output_commitment1)?;
+            if proof.output_commitment0 == proof.output_commitment1 {
+                return Err(ContractError::AlreadyInsertedCommitment);
+            }
         }
 
         // 7. Mark nullifiers as spent
@@ -471,13 +539,18 @@ impl PoolContract {
         let withdrawal_recipient = payout.map(|_| ext_data.recipient.clone());
 
         // 9. Insert new commitments into Merkle tree
-        let (idx_0, idx_1) = MerkleTreeWithHistory::insert_two_leaves(
-            env,
-            proof.output_commitment0.clone(),
-            proof.output_commitment1.clone(),
-        )?;
-        Self::mark_commitment_inserted(env, &proof.output_commitment0)?;
-        Self::mark_commitment_inserted(env, &proof.output_commitment1)?;
+        let inserted = if insert_outputs {
+            let (idx_0, idx_1) = MerkleTreeWithHistory::insert_two_leaves(
+                env,
+                proof.output_commitment0.clone(),
+                proof.output_commitment1.clone(),
+            )?;
+            Self::mark_commitment_inserted(env, &proof.output_commitment0)?;
+            Self::mark_commitment_inserted(env, &proof.output_commitment1)?;
+            Some((idx_0, idx_1))
+        } else {
+            None
+        };
 
         // Pay out only once every state change is committed. `transfer` hands
         // control to the token contract, and this contract does not own that
@@ -492,7 +565,31 @@ impl PoolContract {
             }
         }
 
-        // 10. Emit commitment events
+        let amount_bucket = ext_data
+            .ext_amount
+            .to_i128()
+            .ok_or(ContractError::WrongExtAmount)?;
+
+        // 10. Emit commitment events, and 11. one settlement event per
+        //     nullifier for indexer lookups. The exit path has no commitments
+        //     to announce, so it emits its own event instead: an indexer that
+        //     recorded these outputs as leaves would compute a root the
+        //     contract never had.
+        let Some((idx_0, idx_1)) = inserted else {
+            for nullifier in proof.input_nullifiers.iter() {
+                ExitEvent {
+                    nullifier,
+                    pool: this.clone(),
+                    amount_bucket,
+                    public_amount: proof.public_amount.clone(),
+                    recipient: ext_data.recipient.clone(),
+                    asset: token.clone(),
+                }
+                .publish(env);
+            }
+            return Ok(());
+        };
+
         NewCommitmentEvent {
             commitment: proof.output_commitment0.clone(),
             index: idx_0,
@@ -507,12 +604,6 @@ impl PoolContract {
         }
         .publish(env);
 
-        let amount_bucket = ext_data
-            .ext_amount
-            .to_i128()
-            .ok_or(ContractError::WrongExtAmount)?;
-
-        // 11. Emit one settlement event per nullifier for indexer lookups.
         for nullifier in proof.input_nullifiers.iter() {
             SettlementEvent {
                 nullifier,

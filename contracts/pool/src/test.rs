@@ -1242,3 +1242,220 @@ fn a_reentrant_token_cannot_insert_a_commitment_twice() {
     // Nothing was recorded: the outer deposit unwound with the inner one.
     assert!(!pool.has_commitment(&commitment));
 }
+
+// ─── Exit path ───────────────────────────────────────────────────────────────
+// Every transaction writes two output commitments, so a full tree closes
+// `transact` for everyone, including holders who only want their money back.
+// `exit` is the way out: same checks, no insertion, outputs forfeited.
+
+/// A pool whose tree is one insertion from full, plus a matching withdrawal.
+///
+/// Two levels is four leaves: one insertion here leaves room for exactly one
+/// more, which is what lets a test watch the door close.
+fn mk_exit_case(env: &Env, setup: &TestSetup, ext_amount: i32, pool_balance: i128) -> TransactCase {
+    let pool_id = register_pool(env, setup, U256::from_u32(env, 1_000), 2);
+    let pool = PoolContractClient::new(env, &pool_id);
+
+    if pool_balance > 0 {
+        StellarAssetClient::new(env, &setup.token).mint(&pool_id, &pool_balance);
+    }
+
+    let ext = mk_ext_data(env, Address::generate(env), ext_amount);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: pool.get_root(),
+        input_nullifiers: vec![env, U256::from_u32(env, 0x501), U256::from_u32(env, 0x502)],
+        output_commitment0: U256::from_u32(env, 0x601),
+        output_commitment1: U256::from_u32(env, 0x602),
+        public_amount: pool.get_public_amount(&ext.ext_amount),
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+
+    TransactCase {
+        pool_id,
+        sender: Address::generate(env),
+        ext,
+        proof,
+    }
+}
+
+/// Fill the tree to capacity, then re-point the proof at the resulting root.
+fn fill_tree(env: &Env, case: &mut TransactCase) {
+    let pool = PoolContractClient::new(env, &case.pool_id);
+    env.as_contract(&case.pool_id, || {
+        let mut filler = 0xF000u32;
+        while !MerkleTreeWithHistory::is_full(env)
+            .unwrap_or_else(|err| panic!("expected a fullness check to succeed: {err:?}"))
+        {
+            let leaf = U256::from_u32(env, filler);
+            MerkleTreeWithHistory::insert_two_leaves(env, leaf.clone(), leaf)
+                .unwrap_or_else(|err| panic!("expected filler insertion to succeed: {err:?}"));
+            filler = filler.saturating_add(1);
+        }
+    });
+    case.proof.root = pool.get_root();
+}
+
+#[test]
+fn a_full_tree_closes_transact() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    assert!(!pool.is_tree_full());
+    fill_tree(&env, &mut case);
+    assert!(pool.is_tree_full());
+    assert_eq!(pool.remaining_leaves(), 0);
+
+    // The withdrawal the holder wanted is now impossible through `transact`.
+    assert!(
+        pool.try_transact(&case.proof, &case.ext, &case.sender)
+            .is_err()
+    );
+}
+
+#[test]
+fn exit_pays_out_of_a_full_pool_without_inserting_its_outputs() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    fill_tree(&env, &mut case);
+
+    let root_before = pool.get_root();
+    let recipient = case.ext.recipient.clone();
+    pool.exit(&case.proof, &case.ext, &case.sender);
+
+    assert_eq!(token.balance(&recipient), 40);
+    assert_eq!(token.balance(&case.pool_id), 60);
+    assert!(pool.has_nullifier(&case.proof.input_nullifiers.get_unchecked(0)));
+    assert!(pool.has_nullifier(&case.proof.input_nullifiers.get_unchecked(1)));
+
+    // The outputs are gone, not stored: the tree must be untouched, or every
+    // path an indexer hands out would stop matching the contract.
+    assert!(!pool.has_commitment(&case.proof.output_commitment0));
+    assert!(!pool.has_commitment(&case.proof.output_commitment1));
+    assert_eq!(pool.get_root(), root_before);
+    assert_eq!(pool.remaining_leaves(), 0);
+}
+
+#[test]
+fn exit_drains_a_second_pair_of_notes() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    let token = TokenClient::new(&env, &setup.token);
+    fill_tree(&env, &mut case);
+
+    pool.exit(&case.proof, &case.ext, &case.sender);
+
+    // Two notes per call, so a holder with more of them keeps going. Without
+    // this the exit would cap at two notes and strand the rest.
+    let ext = mk_ext_data(&env, case.ext.recipient.clone(), -25);
+    let second = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root: pool.get_root(),
+        input_nullifiers: vec![
+            &env,
+            U256::from_u32(&env, 0x503),
+            U256::from_u32(&env, 0x504),
+        ],
+        output_commitment0: U256::from_u32(&env, 0x603),
+        output_commitment1: U256::from_u32(&env, 0x604),
+        public_amount: pool.get_public_amount(&ext.ext_amount),
+        ext_data_hash: compute_ext_hash(&env, &ext),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+    pool.exit(&second, &ext, &case.sender);
+
+    assert_eq!(token.balance(&case.ext.recipient), 65);
+    assert_eq!(token.balance(&case.pool_id), 35);
+}
+
+#[test]
+fn exit_is_refused_while_transact_still_works() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let case = mk_exit_case(&env, &setup, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+
+    // Room left, so `transact` would insert the outputs and the caller would
+    // keep their change. Burning it here would be a silent loss.
+    assert!(pool.try_exit(&case.proof, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn exit_refuses_a_deposit() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, 40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    fill_tree(&env, &mut case);
+
+    // Nothing comes back from a deposit whose output notes are discarded.
+    assert!(pool.try_exit(&case.proof, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn exit_refuses_a_transfer_that_moves_no_money_out() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, 0, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    fill_tree(&env, &mut case);
+
+    // A private send writes its value entirely into the outputs, so through
+    // this path it would destroy the notes and pay nobody.
+    assert!(pool.try_exit(&case.proof, &case.ext, &case.sender).is_err());
+}
+
+#[test]
+fn exit_rejects_a_replayed_nullifier() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    fill_tree(&env, &mut case);
+
+    pool.exit(&case.proof, &case.ext, &case.sender);
+
+    let ext = mk_ext_data(&env, case.ext.recipient.clone(), -10);
+    let replay = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root: pool.get_root(),
+        input_nullifiers: case.proof.input_nullifiers.clone(),
+        output_commitment0: U256::from_u32(&env, 0x605),
+        output_commitment1: U256::from_u32(&env, 0x606),
+        public_amount: pool.get_public_amount(&ext.ext_amount),
+        ext_data_hash: compute_ext_hash(&env, &ext),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+
+    assert!(pool.try_exit(&replay, &ext, &case.sender).is_err());
+}
+
+#[test]
+fn exit_rejects_an_unknown_root() {
+    let env = test_env();
+    env.mock_all_auths();
+    let setup = setup_test_contracts_with_mock_verifier(&env);
+    let mut case = mk_exit_case(&env, &setup, -40, 100);
+    let pool = PoolContractClient::new(&env, &case.pool_id);
+    fill_tree(&env, &mut case);
+
+    let mut proof = case.proof;
+    proof.root = U256::from_u32(&env, 0xBAD2);
+
+    assert!(pool.try_exit(&proof, &case.ext, &case.sender).is_err());
+}

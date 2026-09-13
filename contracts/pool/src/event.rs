@@ -65,6 +65,32 @@ pub struct SettlementEvent {
     pub asset: Address,
 }
 
+/// Event emitted when a spend leaves the pool through the exit path
+///
+/// The exit path runs only once the tree is full, and it discards the
+/// transaction's output notes rather than inserting them, so this event
+/// deliberately carries no commitments or indices. An indexer should record the
+/// nullifiers as spent and add nothing to its copy of the tree, or its root
+/// will diverge from the contract's.
+#[contractevent(topics = ["Exit"])]
+#[derive(Clone)]
+pub struct ExitEvent {
+    /// Spent nullifier hash. One event is emitted for each input nullifier.
+    #[topic]
+    pub nullifier: U256,
+    /// Pool identifier for indexers consuming multiple pool contracts
+    #[topic]
+    pub pool: Address,
+    /// Public amount bucket associated with the external amount
+    pub amount_bucket: i128,
+    /// Public amount passed to the verifier, encoded in the BN254 field
+    pub public_amount: U256,
+    /// Where the withdrawn tokens went
+    pub recipient: Address,
+    /// Token contract settled by the pool
+    pub asset: Address,
+}
+
 /// Event emitted when public tokens are deposited into the pool
 ///
 /// The event carries only indexer-safe metadata needed to reconstruct

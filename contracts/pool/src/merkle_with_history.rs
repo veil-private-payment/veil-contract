@@ -190,6 +190,36 @@ impl MerkleTreeWithHistory {
         ))
     }
 
+    /// Whether another two-leaf insertion still fits.
+    ///
+    /// Every shielded transaction writes two output commitments, so a tree with
+    /// one slot left is already closed to `transact`. Callers use this to pick
+    /// the exit path instead.
+    pub fn is_full(env: &Env) -> Result<bool, Error> {
+        let storage = env.storage().persistent();
+        let levels: u32 = storage
+            .get(&MerkleDataKey::Levels)
+            .ok_or(Error::NotInitialized)?;
+        let next_index: u64 = storage
+            .get(&MerkleDataKey::NextIndex)
+            .ok_or(Error::NotInitialized)?;
+        let max_leaves = 1u64.checked_shl(levels).ok_or(Error::WrongLevels)?;
+        Ok(next_index.checked_add(2).ok_or(Error::Overflow)? > max_leaves)
+    }
+
+    /// Leaves still free in the tree.
+    pub fn remaining_leaves(env: &Env) -> Result<u64, Error> {
+        let storage = env.storage().persistent();
+        let levels: u32 = storage
+            .get(&MerkleDataKey::Levels)
+            .ok_or(Error::NotInitialized)?;
+        let next_index: u64 = storage
+            .get(&MerkleDataKey::NextIndex)
+            .ok_or(Error::NotInitialized)?;
+        let max_leaves = 1u64.checked_shl(levels).ok_or(Error::WrongLevels)?;
+        Ok(max_leaves.saturating_sub(next_index))
+    }
+
     /// Check if a root exists in the recent history
     ///
     /// Searches the root history ring buffer to verify if a given root is

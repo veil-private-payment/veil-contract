@@ -16,7 +16,7 @@ research implementation.
 
 | Path | Role |
 |---|---|
-| `contracts/pool` | Shielded pool: storage, admin surface, deposit and shielded transact |
+| `contracts/pool` | Shielded pool: storage, admin surface, deposit, shielded transact, and the full-tree exit |
 | `contracts/verifier` | Groth16 verifier over BN254, embeds the circuit verifying key at build time |
 | `contracts/mock-verifier` | Demo-only verifier fallback for local tests, performs no verification |
 | `circuit-keys` | Key parsing helpers shared by the verifier build script |
@@ -41,6 +41,10 @@ that the Groth16 proof verifies against the embedded verification key, and that
 no nullifier has been spent before. The circuit binds the spender's key to the
 allowlist, so a spender who is not enrolled cannot satisfy both the membership
 constraint and the live root.
+
+The same checks run on `exit`, the entrypoint that spends out of a pool whose
+tree is full. It differs from `transact` in one respect: the output commitments
+are discarded rather than inserted, which is what lets it run with no room left.
 
 ## Authorization Model
 
@@ -192,6 +196,11 @@ work an on-chain recording needs:
 | `transact_rejects_unknown_root` | proof bound to a pool root the pool never had |
 | `transact_rejects_bad_ext_hash` | external data swapped after proving |
 | `transact_rejects_bad_public_amount` | public amount not matching the external amount |
+| `exit_is_refused_while_transact_still_works` | forfeiting outputs while the normal path is open |
+| `exit_refuses_a_deposit` | value paid into a pool that would discard the note |
+| `exit_refuses_a_transfer_that_moves_no_money_out` | private send whose value lives only in the discarded outputs |
+| `exit_rejects_a_replayed_nullifier` | double spend through the exit path |
+| `exit_rejects_an_unknown_root` | exit proof bound to a root the pool never had |
 | `a_real_proof_is_rejected_when_the_spender_is_not_enrolled` | real proof, spender never enrolled |
 
 ## Circuit
@@ -216,6 +225,15 @@ the trusted setup limitation.
   ceiling the pool constructor can create in one transaction: it writes two
   ledger entries per level and Soroban allows 50 writes. Going deeper needs the
   per-level arrays packed into single entries.
+- A full tree closes `transact`, because every shielded transaction writes two
+  output commitments. `exit` is the way out of a full pool: same proof and
+  nullifier checks, the recipient is paid, and the transaction's output notes
+  are discarded instead of inserted. A caller must therefore spend their inputs
+  in full, two notes per call, and the pool pays out less than it took in and
+  never more. It is refused while `transact` still works, and refused for
+  anything that is not a withdrawal. `is_tree_full` and `remaining_leaves` say
+  which path applies. Capacity itself is unchanged: this keeps a full pool from
+  trapping the notes inside it, it does not make the pool bigger.
 - Not audited. Testnet only.
 
 ## License
