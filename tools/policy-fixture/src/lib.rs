@@ -515,18 +515,26 @@ fn build_policy_inputs(ext_data_hash: Scalar, ext_amount: i64) -> Result<PolicyI
         &outputs.iter().map(|note| note.blinding).collect::<Vec<_>>(),
     );
 
-    // Nested, circom/snarkjs-compatible input.json (signal names match the
-    // `policy_tx_2_2` main component, buses as nested objects).
+    // input.json for the circom witness calculator. Signal names match the
+    // `policy_tx_2_2` main component.
+    //
+    // A bus is passed as a flat array in declaration order, not as an object
+    // keyed by field name: `MembershipProof` is leaf, blinding,
+    // pathElements[levels], pathIndices. An object is rejected with "Not enough
+    // values for input signal membershipProofs", and only when a proof is
+    // generated, so it is easy to ship a file that never works.
     let dec = |value: Scalar| scalar_to_bigint(value).to_string();
     let membership_proofs_json = (0..inputs.len())
         .map(|i| {
-            let leaf = poseidon2_hash2(public_keys[i], membership_blinding, Some(Scalar::from(1u64)));
-            json!([{
-                "leaf": dec(leaf),
-                "blinding": dec(membership_blinding),
-                "pathElements": membership_path_elements[i].iter().map(|v| dec(*v)).collect::<Vec<_>>(),
-                "pathIndices": membership_path_indices[i].to_string(),
-            }])
+            let leaf = poseidon2_hash2(
+                public_keys[i],
+                membership_blinding,
+                Some(Scalar::from(1u64)),
+            );
+            let mut bus = vec![dec(leaf), dec(membership_blinding)];
+            bus.extend(membership_path_elements[i].iter().map(|v| dec(*v)));
+            bus.push(membership_path_indices[i].to_string());
+            json!([bus])
         })
         .collect::<Vec<_>>();
     let input_json = json!({

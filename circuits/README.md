@@ -64,6 +64,21 @@ as its final beacon, and `snarkjs powersoftau verify` passes on it.
 This makes both phases single-party. Point `PTAU_FILE` at a published
 multi-party transcript and re-run the setup once one is reachable again.
 
+## Passing A Bus To The Witness Calculator
+
+`MembershipProof` is a circom bus, and the witness calculator takes a bus as a
+flat array in declaration order:
+
+```
+[leaf, blinding, pathElements[0..levels], pathIndices]
+```
+
+An object keyed by field name is rejected with "Not enough values for input
+signal membershipProofs". The error only appears when a proof is generated, not
+when the input is written, so a client can ship a witness that never works.
+`circuits/fixtures/policy_tx_2_2_input.json` uses the array form and proves
+directly with snarkjs.
+
 ## Trusted Setup Limitation
 
 The committed keys come from a single-party setup performed locally with one
