@@ -21,7 +21,7 @@ use soroban_sdk::{
     Address, Bytes, Env, I256, U256, Vec, testutils::Address as _, token::StellarAssetClient,
 };
 
-const LEVELS: u32 = 10;
+const LEVELS: u32 = 16;
 
 fn u256_from_be(env: &Env, bytes: &[u8; 32]) -> U256 {
     U256::from_be_bytes(env, &Bytes::from_array(env, bytes))

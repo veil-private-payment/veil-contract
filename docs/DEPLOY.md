@@ -29,19 +29,28 @@ Writes `target/wasm32v1-none/release/{pool,asp_membership,circom_groth16_verifie
 
 ## 3. Deploy
 
+Both trees must be created at the depth the circuit was compiled for, which is
+16. The pool and the ASP membership contract each take their own `--levels`,
+and a mismatch is not rejected at deploy time: it surfaces later as every real
+proof failing, because the roots cannot agree. Record the value you used.
+
+Depth 16 is also the deepest pool the constructor can create. It writes two
+ledger entries per level, and a Soroban transaction may write 50, so depth 17
+fails with `write ledger entries: 52 > 50`.
+
 ```sh
 stellar contract deploy --wasm target/wasm32v1-none/release/circom_groth16_verifier.wasm \
   --source veil-instaward-1 --network testnet
 
 stellar contract deploy --wasm target/wasm32v1-none/release/asp_membership.wasm \
   --source veil-instaward-1 --network testnet \
-  -- --admin <ADMIN> --levels 10
+  -- --admin <ADMIN> --levels 16
 
 stellar contract deploy --wasm target/wasm32v1-none/release/pool.wasm \
   --source veil-instaward-1 --network testnet \
   -- --admin <ADMIN> --token <TOKEN_SAC> --verifier <VERIFIER> \
      --asp_membership <ASP> --maximum_deposit_amount 1000000000 \
-     --fee_recipient <ADMIN> --fee_bps 0 --levels 10
+     --fee_recipient <ADMIN> --fee_bps 0 --levels 16
 ```
 
 The token used for the recorded run is the native XLM SAC, from
@@ -152,4 +161,4 @@ proof was bound to an allowlist root that is no longer live.
 ## Limitations
 
 The deployed set uses a single admin key, a single-party trusted setup, Merkle
-depth 10, and has not been audited. It is a testnet demonstration.
+depth 16, and has not been audited. It is a testnet demonstration.

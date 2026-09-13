@@ -1,4 +1,4 @@
-.PHONY: check fmt fmt-check test install-circom fetch-circomlib compile-policy-circuit setup-policy-circuit-keys
+.PHONY: check fmt fmt-check test install-circom fetch-circomlib compile-policy-circuit generate-powers-of-tau setup-policy-circuit-keys
 
 check:
 	cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -21,6 +21,9 @@ fetch-circomlib:
 
 compile-policy-circuit:
 	./scripts/compile-policy-circuit.sh
+
+generate-powers-of-tau:
+	./scripts/generate-powers-of-tau.sh
 
 setup-policy-circuit-keys:
 	./scripts/setup-policy-circuit-keys.sh

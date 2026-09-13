@@ -189,7 +189,11 @@ the trusted setup limitation.
 - Single-party trusted setup for the proving and verifying keys. Anyone holding
   the setup randomness could forge proofs. A multi-party ceremony is required
   before the pool holds value.
-- Merkle depth 10, so 1,024 note commitments per pool.
+- Merkle depth 16, so 65,536 leaves per pool. A deposit uses two leaves and a
+  shielded transaction uses two, so that is 32,768 operations. Depth 16 is the
+  ceiling the pool constructor can create in one transaction: it writes two
+  ledger entries per level and Soroban allows 50 writes. Going deeper needs the
+  per-level arrays packed into single entries.
 - Not audited. Testnet only.
 
 ## License

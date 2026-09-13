@@ -12,10 +12,12 @@ ARTIFACT_DIR="${POLICY_CIRCUIT_OUT_DIR:-$ROOT_DIR/target/circuits-artifacts/manu
 KEY_DIR="${POLICY_CIRCUIT_KEY_DIR:-$ROOT_DIR/target/circuit-keys}"
 PTAU_DIR="${PTAU_DIR:-$ROOT_DIR/target/ptau}"
 
-# 2^15 = 32768 constraints, above the circuit's current constraint count.
-PTAU_POWER="${PTAU_POWER:-15}"
-PTAU_FILE="$PTAU_DIR/powersOfTau28_hez_final_${PTAU_POWER}.ptau"
-PTAU_URL="https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_${PTAU_POWER}.ptau"
+# snarkjs sizes the setup by the total constraint count, linear ones included.
+# The depth-16 circuit has 34894, so 2^16 = 65536 is the smallest that fits.
+PTAU_POWER="${PTAU_POWER:-16}"
+# Phase 1 comes from scripts/generate-powers-of-tau.sh. Point PTAU_FILE at a
+# published multi-party transcript instead once one is reachable again.
+PTAU_FILE="${PTAU_FILE:-$PTAU_DIR/veil_pot_${PTAU_POWER}.ptau}"
 
 SNARKJS="$ROOT_DIR/node_modules/.bin/snarkjs"
 R1CS="$ARTIFACT_DIR/$CIRCUIT.r1cs"
@@ -33,10 +35,12 @@ fi
 mkdir -p "$PTAU_DIR" "$KEY_DIR"
 
 if [[ ! -f "$PTAU_FILE" ]]; then
-  echo "Downloading Powers of Tau 2^$PTAU_POWER"
-  curl -sfL --retry 3 "$PTAU_URL" -o "$PTAU_FILE.tmp"
-  mv "$PTAU_FILE.tmp" "$PTAU_FILE"
+  echo "Missing $PTAU_FILE. Run: make generate-powers-of-tau" >&2
+  exit 1
 fi
+
+echo "Verifying the Powers of Tau transcript"
+"$SNARKJS" powersoftau verify "$PTAU_FILE"
 
 echo "Running Groth16 setup"
 "$SNARKJS" groth16 setup "$R1CS" "$PTAU_FILE" "$KEY_DIR/${CIRCUIT}_0000.zkey"

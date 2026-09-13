@@ -26,7 +26,7 @@ use zkhash::{
 };
 
 const CIRCUIT_NAME: &str = "policy_tx_2_2";
-const LEVELS: usize = 10;
+const LEVELS: usize = 16;
 const PROOF_RNG_SEED: u64 = 20_260_612;
 
 /// Value the contracts use for an unfilled Merkle leaf.
