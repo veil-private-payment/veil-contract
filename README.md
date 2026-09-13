@@ -99,18 +99,32 @@ and settles a real proof through the contracts. See
 
 ## Testnet Deployment
 
-Deployed on the Stellar test network on 2026-09-04. Contract IDs, every
-transaction hash and the deploy steps are in
+Deployed on the Stellar test network on 2026-09-14, at circuit depth 16.
+Contract IDs, every transaction hash and the deploy steps are in
 [`deployments/testnet.json`](deployments/testnet.json) and
-[`docs/DEPLOY.md`](docs/DEPLOY.md).
+[`docs/DEPLOY.md`](docs/DEPLOY.md). The earlier depth-10 deployment and its
+recorded runs are kept in the manifest under `supersededDepth10Deployment`.
 
 | Contract | ID |
 |---|---|
-| Pool | `CDYCEX7IXGNNJA4FAVV7WU5KS7RVBAA3RYDTZFOMDWDX36RYV7GWHFTD` |
-| ASP membership | `CDWJ6CBJFRAMAKPN46N2LJQNI4WN7DH6OP6CHZSQRABFEYAOTVENCTCG` |
-| Groth16 verifier | `CCH3JX7NPMNOR45KKWABCZEQUZ6QFQU4WHN6K3CVPTTG4JGSKH6YIQ6B` |
+| Pool | `CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G` |
+| ASP membership | `CBQXK3FHJDQ3SM2Q6OT3NU527B3TY6YWBCBMM4NSV3ZYNUHW6YN5W2UD` |
+| Groth16 verifier | `CDKW7LEKFSFNOB36GDI5QUI5PONPECIJZAE2EBRYJYP3G3YJQJBLU53F` |
+| Faucet | `CBSPSGKVO77BKK357ECZX2LW5PCAGK2QHOPNHNA3Y2PNPTYWA2UWULIU` |
 
-### Recorded Transactions
+The allowlist admin role is held by the faucet, so a tester enrols themselves.
+Both roots were checked against the proof before the spend was submitted, and
+the allowlist root was built entirely through faucet calls.
+
+| Step | Transaction |
+|---|---|
+| Allowlist admin handed to the faucet | [`bf3fb8c6…`](https://stellar.expert/explorer/testnet/tx/bf3fb8c64e6cfbbc4b571cb98ab01268d20069c56ca49ee747d655bb174fdd24) |
+| Deposit | [`49f31aa2…`](https://stellar.expert/explorer/testnet/tx/49f31aa2a1065065dcdb233b5444837d0114e5d3a5773e981c1d049317911ffc) |
+| Self-onboard through the faucet | [`04d3958a…`](https://stellar.expert/explorer/testnet/tx/04d3958a664723c4f64b3250cd59427a2ca2de47393a993e2936283fea8bde40) |
+| Shielded spend, real depth-16 proof | [`64afcf21…`](https://stellar.expert/explorer/testnet/tx/64afcf21c7adbd1bd144db3b978da85a1a510d1785a8ac39c193ed3b0766f428) |
+
+### Recorded Transactions From The Depth-10 Deployment
+
 
 Every link goes to [Stellar Expert](https://stellar.expert/explorer/testnet).
 The spends carry a real Groth16 proof over the `policy_tx_2_2` circuit,

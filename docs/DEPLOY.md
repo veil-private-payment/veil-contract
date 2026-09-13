@@ -59,6 +59,35 @@ The token used for the recorded run is the native XLM SAC, from
 The verifier takes no constructor arguments: its verification key is embedded
 at build time from `circuits/keys/policy_tx_2_2_vk.json`.
 
+## 3b. The Onboarding Faucet
+
+A spender who is not in the allowlist cannot move a note, and the allowlist
+only accepts writes from its admin. Deploy the faucet and hand it that role, so
+testers enrol themselves:
+
+```sh
+stellar contract deploy --wasm target/wasm32v1-none/release/faucet.wasm \
+  --source veil-instaward-1 --network testnet \
+  -- --admin <ADMIN> --asp <ASP> --drip_amount 0 --cooldown_ledgers 12
+
+stellar contract invoke --id <ASP> --source veil-instaward-1 --network testnet --send=yes \
+  -- update_admin --new_admin <FAUCET>
+```
+
+Omit `--token` when the pool settles the native asset: the faucet cannot be the
+admin of that Stellar Asset Contract, so it only enrols and testers fund
+themselves from friendbot. Pass `--token <SAC>` with a positive `--drip_amount`
+when the faucet administers the pool's token, and it will mint as well.
+
+A tester then calls:
+
+```sh
+stellar contract invoke --id <FAUCET> --source <THEIR_KEY> --network testnet --send=yes \
+  -- onboard --to <THEIR_ADDRESS> --membership_leaf <LEAF>
+```
+
+The cooldown is per recipient address.
+
 ## 4. Bind A Proof To The Live Pool
 
 The pool derives `extDataHash` from the XDR encoding of its own `ExtData`, so a

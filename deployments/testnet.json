@@ -2,176 +2,208 @@
   "network": "Test SDF Network ; September 2015",
   "rpc": "https://soroban-testnet.stellar.org",
   "explorer": "https://stellar.expert/explorer/testnet",
-  "deployedAt": "2026-09-04",
-  "status": "Superseded. Every contract recorded here was built for the depth-10 circuit and embeds that ceremony's verification key. The circuit is now depth 16 with a new ceremony, so this set must be redeployed before it is used again. The transaction hashes stay valid as a record of what ran.",
+  "deployedAt": "2026-09-14",
   "admin": "GCMNXF35HYEY5CEVEYCE57DTD4MGFIKQP5II54YK5SMRSXLFFZC7HRXN",
-  "circuitAtDeployTime": {
+  "circuit": {
     "name": "policy_tx_2_2",
-    "levels": 10,
-    "publicInputs": 9
+    "levels": 16,
+    "publicInputs": 9,
+    "note": "levels applies to the pool tree and the ASP membership tree alike, and 16 is the deepest the pool constructor can create in one transaction"
   },
   "contracts": {
-    "pool": "CDYCEX7IXGNNJA4FAVV7WU5KS7RVBAA3RYDTZFOMDWDX36RYV7GWHFTD",
-    "aspMembership": "CDWJ6CBJFRAMAKPN46N2LJQNI4WN7DH6OP6CHZSQRABFEYAOTVENCTCG",
-    "verifier": "CCH3JX7NPMNOR45KKWABCZEQUZ6QFQU4WHN6K3CVPTTG4JGSKH6YIQ6B",
+    "pool": "CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G",
+    "aspMembership": "CBQXK3FHJDQ3SM2Q6OT3NU527B3TY6YWBCBMM4NSV3ZYNUHW6YN5W2UD",
+    "verifier": "CDKW7LEKFSFNOB36GDI5QUI5PONPECIJZAE2EBRYJYP3G3YJQJBLU53F",
+    "faucet": "CBSPSGKVO77BKK357ECZX2LW5PCAGK2QHOPNHNA3Y2PNPTYWA2UWULIU",
     "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
   },
+  "faucetConfig": {
+    "token": null,
+    "cooldownLedgers": 12,
+    "note": "The pool settles the native asset, which the faucet cannot mint, so it only enrols. Testers fund themselves from friendbot. The faucet holds the allowlist admin role."
+  },
   "transactions": {
-    "deposit0": "07d392871ba89a18e2c893264e0c58f993599abf907341b7a873c70281b63a0b",
-    "deposit1": "c6583b6e9658c01099100b7ba02d90717f934c1b1cd0931971531c4058cbb03f",
-    "enrollLeaf0": "1b3ec86d7bb6c00c447a633f12790d9648a8df81fa6e1f60385d95770659cfad",
-    "enrollLeaf1": "8a55a6d00388e9481743045a842976f27478e78a56a5187bc46e3edaaf6e161a",
-    "spendAccepted": "2264cf725519d2647e5d18c0e9b1aa4d617523784942641649bdd3f9a9de0b33",
-    "spendRejected": "2e06159b2f40eefe1be4da3840cebc58995f1232986d6cdbfca0af7ae2d68827",
-    "poolUpgrade": "546558c7b795787ed85f5f5e8f6ec9309f7c3e4e8309eaf9d13a5b78bd3f9b4b"
+    "aspAdminHandover": "bf3fb8c64e6cfbbc4b571cb98ab01268d20069c56ca49ee747d655bb174fdd24",
+    "deposit0": "49f31aa2a1065065dcdb233b5444837d0114e5d3a5773e981c1d049317911ffc",
+    "faucetOnboard0": "04d3958a664723c4f64b3250cd59427a2ca2de47393a993e2936283fea8bde40",
+    "deposit1": "7f5886c734974234abc17fda983edea9e872a13e7614e0b1c9b1f40bd3c960d1",
+    "faucetOnboard1": "cd3bbdc42f00ff9e3311fab913b0c27d090a38f938bae9c91a9e7898a1efd09a",
+    "spendAccepted": "64afcf21c7adbd1bd144db3b978da85a1a510d1785a8ac39c193ed3b0766f428"
   },
-  "demoRun": {
-    "note": "A second contract set recording the lifecycle from an empty pool through a double spend.",
-    "pool": "CAJXOS7QOLBQ5IDEFUDYCDZ3VXS5IRYTGQ2UNUZ2K66EDYF6CNLNOGOV",
-    "aspMembership": "CDHA4UXLP4W3DOYM3PZXFUVINBH55I6A3WUWSWLNA53V3CQZV3QO4YVF",
-    "transactions": {
-      "registerKeys": "4506af9fcd29fb6d8444b205adb2e2f7e3d95a8d8a369d8c084e7b56319ba9f3",
-      "deposit0": "30b10cc916c96ef2ccc2cd8ff36af4dc487ec53ad6f68f820d9b469990e88c38",
-      "enrollLeaf0": "ac8b72c4a68d05c4cddddddcc88927f59ab8bd1dd24094a7b591a1ddc753e62c",
-      "deposit1": "a3b541043929e7e68da8eab4609d4a9fb09c713d895ed9ae560e80fff7d995c3",
-      "enrollLeaf1": "1228eff78df96b84c60029d86b10898151876bb3f4a00aab262425976d1e0ff0",
-      "spendAccepted": "31b43572cfa2fa4868a5229a34095b29612b41105f663d7548655d2c0b9bbbae",
-      "spendRejectedDoubleSpend": "ae61382c9cefb360cddeb7c745018dfca523c8c5e311d6dc38e958d3239d9f79"
-    }
-  },
-  "withdrawalRun": {
-    "note": "A pool with a 1000 bps protocol fee, recording a withdrawal carrying a real proof.",
-    "pool": "CCWVNLRMZHLERIV27V6YMZGVGKTYMHS5HNBFD6QRHRUOAQM2TLENY24L",
-    "aspMembership": "CBC7OKTLBUCBNIMKV3DL5SOHWZ2T5VCLXWP45VFTBT4OTZH2P36XTS5D",
-    "feeBps": 1000,
-    "externalAmount": -10,
-    "payout": {
-      "recipient": 9,
-      "feeRecipient": 1
+  "supersededDepth10Deployment": {
+    "network": "Test SDF Network ; September 2015",
+    "rpc": "https://soroban-testnet.stellar.org",
+    "explorer": "https://stellar.expert/explorer/testnet",
+    "deployedAt": "2026-09-04",
+    "admin": "GCMNXF35HYEY5CEVEYCE57DTD4MGFIKQP5II54YK5SMRSXLFFZC7HRXN",
+    "circuitAtDeployTime": {
+      "name": "policy_tx_2_2",
+      "levels": 10,
+      "publicInputs": 9
+    },
+    "contracts": {
+      "pool": "CDYCEX7IXGNNJA4FAVV7WU5KS7RVBAA3RYDTZFOMDWDX36RYV7GWHFTD",
+      "aspMembership": "CDWJ6CBJFRAMAKPN46N2LJQNI4WN7DH6OP6CHZSQRABFEYAOTVENCTCG",
+      "verifier": "CCH3JX7NPMNOR45KKWABCZEQUZ6QFQU4WHN6K3CVPTTG4JGSKH6YIQ6B",
+      "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
     },
     "transactions": {
-      "deposit0": "cd52c4bf797baad6eeaa5b795bc90ed0c9fcc7cb20592afe850c6e42814a8931",
-      "enrollLeaf0": "ab803c4e9f1028a7cec1c06141b3ec6ba1f80cb75401fe35896c5d3e64afcfa5",
-      "deposit1": "27ef8c437b9668d1ea8e6e7bc2a23a1f4383395c955acf7059c2a1f3e03878bc",
-      "enrollLeaf1": "1a03166a7041ba464e431c0d54b92c954dbaefa466a35ef5da2b75d27380a354",
-      "withdrawal": "12766d4903289db15c5971fe1e10bb88d2bd4db0c287600773c0cc64b49692a1"
+      "deposit0": "07d392871ba89a18e2c893264e0c58f993599abf907341b7a873c70281b63a0b",
+      "deposit1": "c6583b6e9658c01099100b7ba02d90717f934c1b1cd0931971531c4058cbb03f",
+      "enrollLeaf0": "1b3ec86d7bb6c00c447a633f12790d9648a8df81fa6e1f60385d95770659cfad",
+      "enrollLeaf1": "8a55a6d00388e9481743045a842976f27478e78a56a5187bc46e3edaaf6e161a",
+      "spendAccepted": "2264cf725519d2647e5d18c0e9b1aa4d617523784942641649bdd3f9a9de0b33",
+      "spendRejected": "2e06159b2f40eefe1be4da3840cebc58995f1232986d6cdbfca0af7ae2d68827",
+      "poolUpgrade": "546558c7b795787ed85f5f5e8f6ec9309f7c3e4e8309eaf9d13a5b78bd3f9b4b"
+    },
+    "demoRun": {
+      "note": "A second contract set recording the lifecycle from an empty pool through a double spend.",
+      "pool": "CAJXOS7QOLBQ5IDEFUDYCDZ3VXS5IRYTGQ2UNUZ2K66EDYF6CNLNOGOV",
+      "aspMembership": "CDHA4UXLP4W3DOYM3PZXFUVINBH55I6A3WUWSWLNA53V3CQZV3QO4YVF",
+      "transactions": {
+        "registerKeys": "4506af9fcd29fb6d8444b205adb2e2f7e3d95a8d8a369d8c084e7b56319ba9f3",
+        "deposit0": "30b10cc916c96ef2ccc2cd8ff36af4dc487ec53ad6f68f820d9b469990e88c38",
+        "enrollLeaf0": "ac8b72c4a68d05c4cddddddcc88927f59ab8bd1dd24094a7b591a1ddc753e62c",
+        "deposit1": "a3b541043929e7e68da8eab4609d4a9fb09c713d895ed9ae560e80fff7d995c3",
+        "enrollLeaf1": "1228eff78df96b84c60029d86b10898151876bb3f4a00aab262425976d1e0ff0",
+        "spendAccepted": "31b43572cfa2fa4868a5229a34095b29612b41105f663d7548655d2c0b9bbbae",
+        "spendRejectedDoubleSpend": "ae61382c9cefb360cddeb7c745018dfca523c8c5e311d6dc38e958d3239d9f79"
+      }
+    },
+    "withdrawalRun": {
+      "note": "A pool with a 1000 bps protocol fee, recording a withdrawal carrying a real proof.",
+      "pool": "CCWVNLRMZHLERIV27V6YMZGVGKTYMHS5HNBFD6QRHRUOAQM2TLENY24L",
+      "aspMembership": "CBC7OKTLBUCBNIMKV3DL5SOHWZ2T5VCLXWP45VFTBT4OTZH2P36XTS5D",
+      "feeBps": 1000,
+      "externalAmount": -10,
+      "payout": {
+        "recipient": 9,
+        "feeRecipient": 1
+      },
+      "transactions": {
+        "deposit0": "cd52c4bf797baad6eeaa5b795bc90ed0c9fcc7cb20592afe850c6e42814a8931",
+        "enrollLeaf0": "ab803c4e9f1028a7cec1c06141b3ec6ba1f80cb75401fe35896c5d3e64afcfa5",
+        "deposit1": "27ef8c437b9668d1ea8e6e7bc2a23a1f4383395c955acf7059c2a1f3e03878bc",
+        "enrollLeaf1": "1a03166a7041ba464e431c0d54b92c954dbaefa466a35ef5da2b75d27380a354",
+        "withdrawal": "12766d4903289db15c5971fe1e10bb88d2bd4db0c287600773c0cc64b49692a1"
+      }
+    },
+    "exerciseRun": {
+      "note": "A third set driven through every entrypoint, with both accepted and rejected outcomes on chain.",
+      "pool": "CBIYU2NAAERNG363PFJECVNRLJU3UGKUIR3U5NWGYTHLOZOWDA4MXRQY",
+      "aspMembership": "CDLLB5CUEXIN3BOFRFDFBOKLBZXD3TT6TEY74E2QPGCIKRUEKOJOZMAU",
+      "maximumDepositAmount": 500,
+      "transactions": [
+        {
+          "step": "register-1",
+          "outcome": "accepted",
+          "hash": "af7931b0d97b3b23612fb81747a55d553ddf0357e7641401c03b50f47b7ac5c1"
+        },
+        {
+          "step": "register-2",
+          "outcome": "accepted",
+          "hash": "f3b9f5ecc467191aedbecdfe818e5e2ca1baf58a2d2bb4c4a1ca27e3a7b7c6f3"
+        },
+        {
+          "step": "deposit-fixture-0",
+          "outcome": "accepted",
+          "hash": "3d217c4d85001524db5bd844053700e849ce7f7da98642063724562dd9af0f91"
+        },
+        {
+          "step": "enroll-0",
+          "outcome": "accepted",
+          "hash": "95045f38be9855963da8134c3e16d0cf1c778258890de020d82213dffc9fc4a9"
+        },
+        {
+          "step": "deposit-fixture-1",
+          "outcome": "accepted",
+          "hash": "392a70ed9937aae6d07cf5ea69f58510baee8fd4be5006a853c5d704658204bb"
+        },
+        {
+          "step": "enroll-1",
+          "outcome": "accepted",
+          "hash": "3b8baf7ff9c6f33be9ec4658ed9fab9cab9036212c21a95bb14a45ef2eef10a2"
+        },
+        {
+          "step": "spend-accepted",
+          "outcome": "accepted",
+          "hash": "4a3f4d2c689b67ed5c8909afa55ad244f74d25062c21b7ee7fbc8d6e000207f7"
+        },
+        {
+          "step": "spend-double-spend",
+          "outcome": "rejected",
+          "hash": "d889ad33b9eaf2f986d3762f5ede667dfffc5a2b342e969f7a84512b17490da7"
+        },
+        {
+          "step": "deposit-new",
+          "outcome": "accepted",
+          "hash": "5a459756413591a997a854c7c15b746aef54e653746cce6f485b40deb0214158"
+        },
+        {
+          "step": "deposit-duplicate",
+          "outcome": "rejected",
+          "hash": "ad3e3674cdec96ec9b7f387336815e423fe87f12d2bb0febf208f8fe96d9ecea"
+        },
+        {
+          "step": "asp-open-enrollment",
+          "outcome": "accepted",
+          "hash": "0c0fc71d2cb058614db931db13ee70b9e674803c813ed09578be3991cc87d82b"
+        },
+        {
+          "step": "enroll-by-non-admin-open",
+          "outcome": "accepted",
+          "hash": "eb32d0c9c6218b925cdce9aee163b50860180b8390d916099eb05ce1c772deaa"
+        },
+        {
+          "step": "asp-close-enrollment",
+          "outcome": "accepted",
+          "hash": "72418508c38b83ee706033f7f749f0ee5adb4f3c27019c63cd3faeb965d61b65"
+        },
+        {
+          "step": "deposit-extra-1",
+          "outcome": "accepted",
+          "hash": "fe91e6c3e1d4eb35db72a2ff43169ab085111f793bc5ea9936f3310e91369f20"
+        },
+        {
+          "step": "deposit-extra-2",
+          "outcome": "accepted",
+          "hash": "aa28e9a5a79466d3a9f6d7f8b68da4cdf7b8b9767e49315cf3c9a3199918c0a1"
+        },
+        {
+          "step": "deposit-extra-3",
+          "outcome": "accepted",
+          "hash": "a0f1ccf4ef8ee7f2f9f5e612b279ba8a46a2228de6de3bfd3bb7d77017b36c2e"
+        },
+        {
+          "step": "deposit-extra-4",
+          "outcome": "accepted",
+          "hash": "30c149e70aef882e372e46c08084b8723bd006b060c762f49c33bf1e564dadcb"
+        },
+        {
+          "step": "update-verifier",
+          "outcome": "accepted",
+          "hash": "48744063a4082a89710979cf75b1c9b47ae5e310ec20bea52a1cd17fa479b174"
+        },
+        {
+          "step": "update-asp",
+          "outcome": "accepted",
+          "hash": "6d5968ba25637193492e0e50840a3c8af66b8dec0f004980b6276e14ca27d921"
+        }
+      ],
+      "refusedBeforeSubmission": [
+        {
+          "step": "deposit above the configured maximum",
+          "error": "Contract #6"
+        },
+        {
+          "step": "deposit of a zero amount",
+          "error": "Contract #6"
+        },
+        {
+          "step": "enrolment by a non-admin while the allowlist is admin-only",
+          "error": "admin signature required"
+        }
+      ]
     }
-  },
-  "exerciseRun": {
-    "note": "A third set driven through every entrypoint, with both accepted and rejected outcomes on chain.",
-    "pool": "CBIYU2NAAERNG363PFJECVNRLJU3UGKUIR3U5NWGYTHLOZOWDA4MXRQY",
-    "aspMembership": "CDLLB5CUEXIN3BOFRFDFBOKLBZXD3TT6TEY74E2QPGCIKRUEKOJOZMAU",
-    "maximumDepositAmount": 500,
-    "transactions": [
-      {
-        "step": "register-1",
-        "outcome": "accepted",
-        "hash": "af7931b0d97b3b23612fb81747a55d553ddf0357e7641401c03b50f47b7ac5c1"
-      },
-      {
-        "step": "register-2",
-        "outcome": "accepted",
-        "hash": "f3b9f5ecc467191aedbecdfe818e5e2ca1baf58a2d2bb4c4a1ca27e3a7b7c6f3"
-      },
-      {
-        "step": "deposit-fixture-0",
-        "outcome": "accepted",
-        "hash": "3d217c4d85001524db5bd844053700e849ce7f7da98642063724562dd9af0f91"
-      },
-      {
-        "step": "enroll-0",
-        "outcome": "accepted",
-        "hash": "95045f38be9855963da8134c3e16d0cf1c778258890de020d82213dffc9fc4a9"
-      },
-      {
-        "step": "deposit-fixture-1",
-        "outcome": "accepted",
-        "hash": "392a70ed9937aae6d07cf5ea69f58510baee8fd4be5006a853c5d704658204bb"
-      },
-      {
-        "step": "enroll-1",
-        "outcome": "accepted",
-        "hash": "3b8baf7ff9c6f33be9ec4658ed9fab9cab9036212c21a95bb14a45ef2eef10a2"
-      },
-      {
-        "step": "spend-accepted",
-        "outcome": "accepted",
-        "hash": "4a3f4d2c689b67ed5c8909afa55ad244f74d25062c21b7ee7fbc8d6e000207f7"
-      },
-      {
-        "step": "spend-double-spend",
-        "outcome": "rejected",
-        "hash": "d889ad33b9eaf2f986d3762f5ede667dfffc5a2b342e969f7a84512b17490da7"
-      },
-      {
-        "step": "deposit-new",
-        "outcome": "accepted",
-        "hash": "5a459756413591a997a854c7c15b746aef54e653746cce6f485b40deb0214158"
-      },
-      {
-        "step": "deposit-duplicate",
-        "outcome": "rejected",
-        "hash": "ad3e3674cdec96ec9b7f387336815e423fe87f12d2bb0febf208f8fe96d9ecea"
-      },
-      {
-        "step": "asp-open-enrollment",
-        "outcome": "accepted",
-        "hash": "0c0fc71d2cb058614db931db13ee70b9e674803c813ed09578be3991cc87d82b"
-      },
-      {
-        "step": "enroll-by-non-admin-open",
-        "outcome": "accepted",
-        "hash": "eb32d0c9c6218b925cdce9aee163b50860180b8390d916099eb05ce1c772deaa"
-      },
-      {
-        "step": "asp-close-enrollment",
-        "outcome": "accepted",
-        "hash": "72418508c38b83ee706033f7f749f0ee5adb4f3c27019c63cd3faeb965d61b65"
-      },
-      {
-        "step": "deposit-extra-1",
-        "outcome": "accepted",
-        "hash": "fe91e6c3e1d4eb35db72a2ff43169ab085111f793bc5ea9936f3310e91369f20"
-      },
-      {
-        "step": "deposit-extra-2",
-        "outcome": "accepted",
-        "hash": "aa28e9a5a79466d3a9f6d7f8b68da4cdf7b8b9767e49315cf3c9a3199918c0a1"
-      },
-      {
-        "step": "deposit-extra-3",
-        "outcome": "accepted",
-        "hash": "a0f1ccf4ef8ee7f2f9f5e612b279ba8a46a2228de6de3bfd3bb7d77017b36c2e"
-      },
-      {
-        "step": "deposit-extra-4",
-        "outcome": "accepted",
-        "hash": "30c149e70aef882e372e46c08084b8723bd006b060c762f49c33bf1e564dadcb"
-      },
-      {
-        "step": "update-verifier",
-        "outcome": "accepted",
-        "hash": "48744063a4082a89710979cf75b1c9b47ae5e310ec20bea52a1cd17fa479b174"
-      },
-      {
-        "step": "update-asp",
-        "outcome": "accepted",
-        "hash": "6d5968ba25637193492e0e50840a3c8af66b8dec0f004980b6276e14ca27d921"
-      }
-    ],
-    "refusedBeforeSubmission": [
-      {
-        "step": "deposit above the configured maximum",
-        "error": "Contract #6"
-      },
-      {
-        "step": "deposit of a zero amount",
-        "error": "Contract #6"
-      },
-      {
-        "step": "enrolment by a non-admin while the allowlist is admin-only",
-        "error": "admin signature required"
-      }
-    ]
   }
 }
