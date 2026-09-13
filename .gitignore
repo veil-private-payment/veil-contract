@@ -5,12 +5,8 @@ target/
 test_snapshots/
 .env
 .env.local
-deployments/local.env
-deployments/local.json
-deployments/testnet.env
-deployments/testnet.json
-deployments/testnet-*.env
-deployments/testnet-*.json
+# Deployment manifests are evidence and belong in the repository. Only files
+# that carry secrets stay out.
 deployments/*.deploy.env
 !deployments/*.deploy.env.example
 # Local secret keys for scripts (never commit). Keep the folder + its README.
