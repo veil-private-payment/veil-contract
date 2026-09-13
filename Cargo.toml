@@ -2,6 +2,7 @@
 members = [
     "circuit-keys",
     "contracts/asp-membership",
+    "contracts/faucet",
     "contracts/types",
     "contracts/soroban-utils",
     "contracts/mock-verifier",
@@ -35,6 +36,7 @@ circom-groth16-verifier = { path = "contracts/verifier" }
 circuit-keys = { path = "circuit-keys" }
 cfg-if = { version = "1", default-features = false }
 contract-types = { path = "contracts/types" }
+faucet = { path = "contracts/faucet" }
 getrandom = { version = "0.2", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 mock-verifier = { path = "contracts/mock-verifier" }

@@ -21,6 +21,7 @@ research implementation.
 | `contracts/mock-verifier` | Demo-only verifier fallback for local tests, performs no verification |
 | `circuit-keys` | Key parsing helpers shared by the verifier build script |
 | `contracts/asp-membership` | Association Set Provider allowlist read by the pool on every spend |
+| `contracts/faucet` | Testnet onboarding: holds the allowlist admin role and enrols testers under a cooldown |
 | `contracts/types` | Shared contract types |
 | `contracts/soroban-utils` | BN254 and Groth16 helpers for contract code |
 | `circuits` | Circom policy transaction circuit, plus its proving and verifying keys |
@@ -53,6 +54,13 @@ address is either the admin or an ordinary user.
 The allowlist contract has its own admin. By default only that admin may enrol
 a key; `set_admin_insert_only(false)` opens enrolment to anyone, which is
 useful on testnet.
+
+A spender who is not enrolled cannot move a note at all, so a shared testnet
+needs a way in that does not involve a human. `contracts/faucet` takes the
+allowlist admin role and enrols a caller under a per-address cooldown, and
+mints the pool token as well when it is the admin of that token's Stellar Asset
+Contract. It grants admission to anyone who asks, which is a testnet
+convenience and not a compliance posture.
 
 ### External Calls
 
