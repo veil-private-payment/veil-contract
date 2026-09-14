@@ -728,3 +728,113 @@ fn test_merkle_consistency() {
         );
     }
 }
+
+// ─── Revocation ──────────────────────────────────────────────────────────────
+// An incremental tree cannot drop a leaf: the contract keeps only the filled
+// subtrees along the last insertion path. Revoking therefore hands the tree to
+// the operator, who rebuilds it and publishes the root.
+
+#[test]
+fn revoking_publishes_the_rebuilt_root() {
+    let env = test_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(ASPMembership, (admin.clone(), 4u32));
+    let client = ASPMembershipClient::new(&env, &contract_id);
+
+    client.insert_leaf(&U256::from_u32(&env, 11));
+    client.insert_leaf(&U256::from_u32(&env, 22));
+    let before = client.get_root();
+
+    let rebuilt = U256::from_u32(&env, 0xABCD);
+    client.revoke_leaf(&U256::from_u32(&env, 11), &rebuilt);
+
+    assert_ne!(before, client.get_root());
+    assert_eq!(client.get_root(), rebuilt);
+    assert!(client.is_operator_maintained());
+}
+
+#[test]
+fn appending_on_chain_stops_once_the_operator_owns_the_tree() {
+    // The stored subtrees describe a tree that no longer exists, so an append
+    // computed from them would publish a root nobody can prove against.
+    let env = test_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(ASPMembership, (admin, 4u32));
+    let client = ASPMembershipClient::new(&env, &contract_id);
+
+    client.insert_leaf(&U256::from_u32(&env, 11));
+    client.revoke_leaf(&U256::from_u32(&env, 11), &U256::from_u32(&env, 0xABCD));
+
+    assert!(client.try_insert_leaf(&U256::from_u32(&env, 33)).is_err());
+}
+
+#[test]
+fn the_operator_adds_members_by_publishing_a_root() {
+    let env = test_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(ASPMembership, (admin, 4u32));
+    let client = ASPMembershipClient::new(&env, &contract_id);
+
+    client.insert_leaf(&U256::from_u32(&env, 11));
+    client.revoke_leaf(&U256::from_u32(&env, 11), &U256::from_u32(&env, 0xABCD));
+
+    let after_add = U256::from_u32(&env, 0xBEEF);
+    client.publish_leaf(&U256::from_u32(&env, 44), &7u64, &after_add);
+
+    assert_eq!(client.get_root(), after_add);
+}
+
+#[test]
+fn publishing_needs_the_operator_handover_first() {
+    // Otherwise the admin could set any root while the contract still believes
+    // it owns the tree, and the next on-chain insert would overwrite it.
+    let env = test_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(ASPMembership, (admin, 4u32));
+    let client = ASPMembershipClient::new(&env, &contract_id);
+
+    assert!(
+        client
+            .try_publish_leaf(
+                &U256::from_u32(&env, 44),
+                &0u64,
+                &U256::from_u32(&env, 0xBEEF)
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn a_root_outside_the_field_is_refused() {
+    let env = test_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(ASPMembership, (admin, 4u32));
+    let client = ASPMembershipClient::new(&env, &contract_id);
+
+    let too_large = soroban_utils::bn256_modulus(&env);
+    assert!(
+        client
+            .try_revoke_leaf(&U256::from_u32(&env, 11), &too_large)
+            .is_err()
+    );
+}
+
+#[test]
+fn only_the_admin_revokes() {
+    let env = test_env();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(ASPMembership, (admin, 4u32));
+    let client = ASPMembershipClient::new(&env, &contract_id);
+
+    // No auth mocked: the admin signature is missing.
+    assert!(
+        client
+            .try_revoke_leaf(&U256::from_u32(&env, 11), &U256::from_u32(&env, 0xABCD))
+            .is_err()
+    );
+}

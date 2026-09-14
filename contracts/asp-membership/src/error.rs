@@ -16,4 +16,8 @@ pub enum Error {
     Overflow = 5,
     /// Field input is outside the BN254 scalar field
     InvalidFieldElement = 6,
+    /// The tree is maintained off chain since a revocation; publish the root
+    OperatorMaintained = 7,
+    /// The call needs the tree to have been handed to the operator first
+    NotOperatorMaintained = 8,
 }

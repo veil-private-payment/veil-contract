@@ -125,3 +125,24 @@ pub(crate) fn set_admin_insert_only(env: &Env, admin_only: bool) {
         .persistent()
         .set(&DataKey::AdminInsertOnly, &admin_only);
 }
+
+/// Whether the tree is maintained off chain.
+///
+/// An incremental Merkle tree keeps only the filled subtrees along the last
+/// insertion path, which is enough to append and not enough to remove: taking a
+/// leaf out changes hashes this contract never stored. Revoking therefore hands
+/// the tree to the operator, who rebuilds it from the full set and publishes
+/// the result. From then on the stored subtrees describe a tree that no longer
+/// exists, so appends must come the same way.
+pub(crate) fn get_operator_maintained(env: &Env) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OperatorMaintained)
+        .unwrap_or(false)
+}
+
+pub(crate) fn set_operator_maintained(env: &Env, maintained: bool) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::OperatorMaintained, &maintained);
+}

@@ -219,7 +219,9 @@ the trusted setup limitation.
 - Single admin key. No multisig, no timelock, no pause.
 - Single-party trusted setup for the proving and verifying keys. Anyone holding
   the setup randomness could forge proofs. A multi-party ceremony is required
-  before the pool holds value.
+  before the pool holds value; the scripts to run and verify one are in
+  [`docs/CEREMONY.md`](docs/CEREMONY.md), and what they cannot supply is
+  independent participants.
 - Merkle depth 16, so 65,536 leaves per pool. A deposit uses two leaves and a
   shielded transaction uses two, so that is 32,768 operations. Depth 16 is the
   ceiling the pool constructor can create in one transaction: it writes two
@@ -234,6 +236,13 @@ the trusted setup limitation.
   anything that is not a withdrawal. `is_tree_full` and `remaining_leaves` say
   which path applies. Capacity itself is unchanged: this keeps a full pool from
   trapping the notes inside it, it does not make the pool bigger.
+- Revoking a member is the operator's job, not the contract's: an incremental
+  Merkle tree keeps only the filled subtrees along the last insertion path,
+  which is enough to append and not to remove. `revoke_leaf` therefore publishes
+  the root of a tree rebuilt off chain without that member, and from then on the
+  allowlist is maintained the same way through `publish_leaf`. The pool compares
+  a spend against the current allowlist root and keeps no history of it, so a
+  revocation takes effect on the next transaction.
 - Not audited. Testnet only.
 
 ## License

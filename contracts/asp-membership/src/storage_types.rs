@@ -24,4 +24,7 @@ pub(crate) enum DataKey {
     Root,
     /// Whether admin permission is required to insert a leaf
     AdminInsertOnly,
+    /// Set once a leaf has been revoked, after which the tree is rebuilt off
+    /// chain and the admin publishes each new root.
+    OperatorMaintained,
 }

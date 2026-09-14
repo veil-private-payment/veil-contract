@@ -1,8 +1,8 @@
-use soroban_sdk::{Address, Env, U256, Vec, contract, contractimpl};
+use soroban_sdk::{Address, BytesN, Env, U256, Vec, contract, contractimpl};
 use soroban_utils::{bn256_modulus, get_zeroes, poseidon2_compress};
 
 use crate::error::Error;
-use crate::event::LeafAddedEvent;
+use crate::event::{LeafAddedEvent, LeafRevokedEvent};
 use crate::storage;
 use crate::storage_types::DataKey;
 
@@ -60,6 +60,13 @@ impl ASPMembership {
     pub fn insert_leaf(env: Env, leaf: U256) -> Result<(), Error> {
         Self::ensure_field_element(&env, &leaf)?;
 
+        // Once a revocation has rebuilt the tree off chain, the subtrees stored
+        // here describe a tree that no longer exists, so appending from them
+        // would publish a root nobody can prove against.
+        if storage::get_operator_maintained(&env) {
+            return Err(Error::OperatorMaintained);
+        }
+
         if storage::get_admin_insert_only(&env) {
             let admin = storage::get_admin(&env)?;
             admin.require_auth();
@@ -104,6 +111,84 @@ impl ASPMembership {
         storage::set_next_index(&env, actual_index.checked_add(1).ok_or(Error::Overflow)?);
 
         Ok(())
+    }
+
+    /// Revoke a leaf, publishing the root of the tree rebuilt without it
+    ///
+    /// An incremental Merkle tree cannot remove a leaf: this contract keeps the
+    /// filled subtrees along the last insertion path, which is enough to append
+    /// and nothing else. So revoking is the operator's job — rebuild the set
+    /// without that member, and publish the root here.
+    ///
+    /// The pool compares a spend against this exact root and keeps no history
+    /// of it, so the revocation bites on the very next transaction.
+    ///
+    /// From here on the tree is maintained off chain: `insert_leaf` is closed
+    /// and further members arrive through `publish_leaf`. The admin is trusted
+    /// with the root, which is the same trust it already had over who gets in.
+    pub fn revoke_leaf(env: Env, leaf: U256, new_root: U256) -> Result<(), Error> {
+        Self::ensure_field_element(&env, &leaf)?;
+        Self::ensure_field_element(&env, &new_root)?;
+
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+
+        storage::set_operator_maintained(&env, true);
+        storage::set_root(&env, &new_root);
+
+        LeafRevokedEvent {
+            leaf,
+            root: new_root,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Add a member to a tree the operator now maintains
+    ///
+    /// The counterpart to {@link revoke_leaf}: the operator rebuilds with the
+    /// new member and publishes the root. It emits the same event an ordinary
+    /// insertion does, so anything following the allowlist sees one stream of
+    /// membership changes either way.
+    pub fn publish_leaf(env: Env, leaf: U256, index: u64, new_root: U256) -> Result<(), Error> {
+        Self::ensure_field_element(&env, &leaf)?;
+        Self::ensure_field_element(&env, &new_root)?;
+
+        if !storage::get_operator_maintained(&env) {
+            return Err(Error::NotOperatorMaintained);
+        }
+
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+
+        storage::set_root(&env, &new_root);
+
+        LeafAddedEvent {
+            leaf,
+            index,
+            root: new_root,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Replace this contract's code. Admin only.
+    ///
+    /// The pool could always be upgraded and this could not, which meant any
+    /// fix here cost a fresh deployment plus a repoint, and every member
+    /// re-enrolling.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    /// Whether the tree is rebuilt off chain, following a revocation.
+    pub fn is_operator_maintained(env: Env) -> bool {
+        storage::get_operator_maintained(&env)
     }
 
     //--------- Getters -----------
