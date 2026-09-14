@@ -12,7 +12,7 @@
   },
   "contracts": {
     "pool": "CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G",
-    "aspMembership": "CBQXK3FHJDQ3SM2Q6OT3NU527B3TY6YWBCBMM4NSV3ZYNUHW6YN5W2UD",
+    "aspMembership": "CDWL6U54NZD4QJWTLZBNFUROR2PDSTSIWHQA32XXLS6PRS5E6FWWLMPE",
     "verifier": "CDKW7LEKFSFNOB36GDI5QUI5PONPECIJZAE2EBRYJYP3G3YJQJBLU53F",
     "faucet": "CBSPSGKVO77BKK357ECZX2LW5PCAGK2QHOPNHNA3Y2PNPTYWA2UWULIU",
     "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
@@ -30,7 +30,10 @@
     "faucetOnboard1": "cd3bbdc42f00ff9e3311fab913b0c27d090a38f938bae9c91a9e7898a1efd09a",
     "spendAccepted": "64afcf21c7adbd1bd144db3b978da85a1a510d1785a8ac39c193ed3b0766f428",
     "poolExitUpgradeUpload": "a73109accb367d7764c1bbff8ef31d9748f7b5885d55968f86ecafbc00cb0fd5",
-    "poolExitUpgrade": "72c8983a1d4f307dd882c7b0755372a5b762446b309cc04241a39ef15c1522a2"
+    "poolExitUpgrade": "72c8983a1d4f307dd882c7b0755372a5b762446b309cc04241a39ef15c1522a2",
+    "aspRevocationUpload": "4dc77e414ffddd8f7ac77dcca3cd77360ac7d36963c16fc73c4da0d5ca517945",
+    "aspAdminToFaucet": "eaf97766793151abc1b33ac2ab792396fbbdc0177e6d5aefc321792b1a89951d",
+    "poolRepointedToNewAsp": "0d5290d6d0ff09f4dbe0118b3a89af7a576165443d1c930d6f7c05cbd8b7b9be"
   },
   "supersededDepth10Deployment": {
     "network": "Test SDF Network ; September 2015",
@@ -209,5 +212,11 @@
     }
   },
   "poolWasmHash": "179289800a9f0eebdabc58ee295577214a253360e383acdbd3582bee91dfabde",
-  "poolUpgradeNote": "the deployed pool was upgraded on 2026-09-14 to add `exit`, the entrypoint that spends out of a pool whose tree is full; `is_tree_full` and `remaining_leaves` report which path applies"
+  "poolUpgradeNote": "the deployed pool was upgraded on 2026-09-14 to add `exit`, the entrypoint that spends out of a pool whose tree is full; `is_tree_full` and `remaining_leaves` report which path applies",
+  "supersededAspMembership": {
+    "contract": "CBQXK3FHJDQ3SM2Q6OT3NU527B3TY6YWBCBMM4NSV3ZYNUHW6YN5W2UD",
+    "why": "replaced 2026-09-14 by an allowlist that can revoke a member and can be upgraded; the old one could do neither, and had no upgrade entrypoint to fix that in place"
+  },
+  "aspMembershipWasmHash": "7e079f133bbcc677f24b83fba8b6c3ee2a2d7ccd5f7138f880c4ce286c88c6d0",
+  "aspNote": "the allowlist starts empty: a tree cannot be moved across contracts, so every member re-enrols. Revocation was exercised on a throwaway deployment (CBYUTPDEXTMK6DD53FNY4KHPGY3F6MZFVM27LSRRZJUKBADAZEI6FGBL) rather than here, because revoking closes `insert_leaf` for good and the faucet depends on it"
 }
