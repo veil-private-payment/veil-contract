@@ -12,9 +12,9 @@
   },
   "contracts": {
     "pool": "CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G",
-    "aspMembership": "CDWL6U54NZD4QJWTLZBNFUROR2PDSTSIWHQA32XXLS6PRS5E6FWWLMPE",
+    "aspMembership": "CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB",
     "verifier": "CDKW7LEKFSFNOB36GDI5QUI5PONPECIJZAE2EBRYJYP3G3YJQJBLU53F",
-    "faucet": "CBSPSGKVO77BKK357ECZX2LW5PCAGK2QHOPNHNA3Y2PNPTYWA2UWULIU",
+    "faucet": "CBQNDLJFT3WIAWMLCGJX7TAPOFLGNRAV73EUF6VVZM33SMSUYHAWW56N",
     "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
   },
   "faucetConfig": {
@@ -32,8 +32,8 @@
     "poolExitUpgradeUpload": "a73109accb367d7764c1bbff8ef31d9748f7b5885d55968f86ecafbc00cb0fd5",
     "poolExitUpgrade": "72c8983a1d4f307dd882c7b0755372a5b762446b309cc04241a39ef15c1522a2",
     "aspRevocationUpload": "4dc77e414ffddd8f7ac77dcca3cd77360ac7d36963c16fc73c4da0d5ca517945",
-    "aspAdminToFaucet": "eaf97766793151abc1b33ac2ab792396fbbdc0177e6d5aefc321792b1a89951d",
-    "poolRepointedToNewAsp": "0d5290d6d0ff09f4dbe0118b3a89af7a576165443d1c930d6f7c05cbd8b7b9be"
+    "aspAdminToFaucet": "d6c9bf80",
+    "poolRepointedToNewAsp": "8553e40273805507cb98ab821e18d96331233e881e0befe4c041517eeacdb1cf"
   },
   "supersededDepth10Deployment": {
     "network": "Test SDF Network ; September 2015",
@@ -215,8 +215,12 @@
   "poolUpgradeNote": "the deployed pool was upgraded on 2026-09-14 to add `exit`, the entrypoint that spends out of a pool whose tree is full; `is_tree_full` and `remaining_leaves` report which path applies",
   "supersededAspMembership": {
     "contract": "CBQXK3FHJDQ3SM2Q6OT3NU527B3TY6YWBCBMM4NSV3ZYNUHW6YN5W2UD",
-    "why": "replaced 2026-09-14 by an allowlist that can revoke a member and can be upgraded; the old one could do neither, and had no upgrade entrypoint to fix that in place"
+    "why": "could neither revoke a member nor be upgraded into something that could"
   },
   "aspMembershipWasmHash": "7e079f133bbcc677f24b83fba8b6c3ee2a2d7ccd5f7138f880c4ce286c88c6d0",
-  "aspNote": "the allowlist starts empty: a tree cannot be moved across contracts, so every member re-enrols. Revocation was exercised on a throwaway deployment (CBYUTPDEXTMK6DD53FNY4KHPGY3F6MZFVM27LSRRZJUKBADAZEI6FGBL) rather than here, because revoking closes `insert_leaf` for good and the faucet depends on it"
+  "aspNote": "the allowlist starts empty: a Merkle tree cannot be carried across contracts, so every member enrols again, which the relayer does on unlock. Revocation was exercised on a throwaway deployment (CBYUTPDEXTMK6DD53FNY4KHPGY3F6MZFVM27LSRRZJUKBADAZEI6FGBL) rather than here, because revoking closes `insert_leaf` for good and the faucet depends on it.",
+  "abandonedAllowlist": {
+    "contract": "CDWL6U54NZD4QJWTLZBNFUROR2PDSTSIWHQA32XXLS6PRS5E6FWWLMPE",
+    "why": "deployed, then its admin was handed to the previous faucet, which stores its allowlist address at construction and cannot be repointed. Nothing could ever write to it again. The faucet has to exist before the allowlist hands over."
+  }
 }
