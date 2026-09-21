@@ -167,6 +167,46 @@ pub fn generate_with_ext_data_hash_and_amount(
     ext_data_hash: [u8; 32],
     ext_amount: i64,
 ) -> Result<Fixture> {
+    generate_inner(ext_data_hash, ext_amount, Funding::Existing, None)
+}
+
+/// A proof for the first value entering a pool that holds nothing.
+///
+/// Both input notes are empty, so the circuit skips their Merkle check and the
+/// proof binds the root of an empty pool. The single funded output is worth the
+/// whole `amount` being shielded, and the circuit enforces
+/// `sum(inputs) + publicAmount == sum(outputs)`, which is the check the closed
+/// `deposit` path never had.
+pub fn generate_first_shield(ext_data_hash: [u8; 32], amount: i64) -> Result<Fixture> {
+    ensure!(amount > 0, "a shield has to move a positive amount");
+    generate_inner(ext_data_hash, amount, Funding::None, None)
+}
+
+/// The same shield, for a pool that already holds notes.
+///
+/// `root` is whatever the target pool currently reports. The input notes are
+/// empty either way, so the circuit never looks inside that tree, but the pool
+/// does check the root is one it has held.
+pub fn generate_shield_against_root(
+    ext_data_hash: [u8; 32],
+    amount: i64,
+    root: [u8; 32],
+) -> Result<Fixture> {
+    ensure!(amount > 0, "a shield has to move a positive amount");
+    generate_inner(
+        ext_data_hash,
+        amount,
+        Funding::None,
+        Some(scalar_from_be_bytes(&root)),
+    )
+}
+
+fn generate_inner(
+    ext_data_hash: [u8; 32],
+    ext_amount: i64,
+    funding: Funding,
+    root_override: Option<Scalar>,
+) -> Result<Fixture> {
     let ext_data_hash = scalar_from_be_bytes(&ext_data_hash);
     let repo_root = repo_root()?;
     let artifact_dir = repo_root.join("target/circuits-artifacts/manual");
@@ -179,7 +219,7 @@ pub fn generate_with_ext_data_hash_and_amount(
         "compiled circuit artifacts are missing; run `make compile-policy-circuit` first"
     );
 
-    let policy_inputs = build_policy_inputs(ext_data_hash, ext_amount)?;
+    let policy_inputs = build_policy_inputs(ext_data_hash, ext_amount, funding, root_override)?;
     let proof_result = prove_and_verify(&wasm_path, &r1cs_path, &proving_key_path, &policy_inputs)?;
 
     Ok(Fixture {
@@ -315,7 +355,28 @@ fn prove_and_verify(
     })
 }
 
-fn build_policy_inputs(ext_data_hash: Scalar, ext_amount: i64) -> Result<PolicyInputs> {
+/// How the fixture's two input notes are funded.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Funding {
+    /// One funded note worth 13, sitting in the tree. The ordinary case.
+    Existing,
+    /// Both notes empty. The circuit skips the Merkle check for a zero-amount
+    /// input, so these notes never have to exist, and the proof can be built
+    /// against whatever root the pool is reporting. This is how value enters a
+    /// pool now that the unbound deposit path is closed.
+    None,
+}
+
+fn build_policy_inputs(
+    ext_data_hash: Scalar,
+    ext_amount: i64,
+    funding: Funding,
+    root_override: Option<Scalar>,
+) -> Result<PolicyInputs> {
+    let shielded_in: i64 = match funding {
+        Funding::Existing => 13,
+        Funding::None => 0,
+    };
     let inputs = [
         InputNote {
             leaf_index: 0,
@@ -330,12 +391,11 @@ fn build_policy_inputs(ext_data_hash: Scalar, ext_amount: i64) -> Result<PolicyI
             leaf_index: 2,
             private_key: Scalar::from(102u64),
             blinding: Scalar::from(211u64),
-            amount: Scalar::from(13u64),
+            amount: Scalar::from(u64::try_from(shielded_in).unwrap_or_default()),
         },
     ];
-    // The only funded input note carries 13. A withdrawal takes value out of
-    // the shielded set, so the funded output carries the remainder.
-    let shielded_in: i64 = 13;
+    // A withdrawal takes value out of the shielded set, so the funded output
+    // carries the remainder of what the input notes held.
     let funded_out = shielded_in
         .checked_add(ext_amount)
         .context("external amount overflows the note total")?;
@@ -378,18 +438,36 @@ fn build_policy_inputs(ext_data_hash: Scalar, ext_amount: i64) -> Result<PolicyI
         );
         let public_key = derive_public_key(note.private_key);
         let cm = commitment(note.amount, public_key, note.blinding);
-        tx_leaves[note.leaf_index] = cm;
+        // With nothing funded there is nothing to find in the tree, and putting
+        // these commitments in would move the root away from the empty one the
+        // pool actually reports.
+        if funding == Funding::Existing {
+            tx_leaves[note.leaf_index] = cm;
+        }
         // `deposit` inserts a two-leaf batch of (commitment, zero), so the leaf
         // paired with a deposited commitment holds a literal zero rather than
         // the empty-leaf constant used for subtrees that were never touched.
-        if let Some(pair_slot) = tx_leaves.get_mut(note.leaf_index.saturating_add(1)) {
+        if funding == Funding::Existing
+            && let Some(pair_slot) = tx_leaves.get_mut(note.leaf_index.saturating_add(1))
+        {
             *pair_slot = Scalar::zero();
         }
         public_keys.push(public_key);
         input_commitments.push(cm);
     }
 
-    let root = merkle_root(tx_leaves.clone())?;
+    // With nothing funded the Merkle check is disabled, so the proof can carry
+    // whatever root the target pool is reporting rather than the empty one.
+    let root = match root_override {
+        Some(value) => {
+            ensure!(
+                funding == Funding::None,
+                "a root override only makes sense when no input note is funded"
+            );
+            value
+        }
+        None => merkle_root(tx_leaves.clone())?,
+    };
     let mut path_indices = Vec::with_capacity(inputs.len());
     let mut path_elements_flat = Vec::with_capacity(inputs.len().saturating_mul(LEVELS));
     let mut input_path_elements: Vec<Vec<Scalar>> = Vec::with_capacity(inputs.len());

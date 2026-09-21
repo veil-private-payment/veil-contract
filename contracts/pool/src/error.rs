@@ -38,6 +38,11 @@ pub enum ContractError {
     InvalidFieldElement = 15,
     /// The exit path was used while the tree still has room for a normal spend
     TreeNotFull = 16,
+    /// `deposit` is closed. It never bound the amount to the commitment, so it
+    /// let a caller pay in one amount and record another. Shield through
+    /// `transact` with a positive external amount instead, where the circuit
+    /// checks that inputs plus the public amount equal outputs.
+    DepositClosed = 17,
 }
 
 /// Conversion from MerkleTreeWithHistory errors to pool contract errors

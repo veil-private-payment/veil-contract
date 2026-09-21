@@ -1,10 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::{
     error::ContractError,
-    event::{
-        DepositEvent, ExitEvent, NewCommitmentEvent, NewNullifierEvent, PublicKeyEvent,
-        SettlementEvent,
-    },
+    event::{ExitEvent, NewCommitmentEvent, NewNullifierEvent, PublicKeyEvent, SettlementEvent},
     merkle_with_history::MerkleTreeWithHistory,
     storage,
     storage_types::{DataKey, MAX_FEE_BPS},
@@ -125,57 +122,26 @@ impl PoolContract {
         .publish(&env);
     }
 
-    /// Deposit public tokens and insert one private commitment into the pool
+    /// Closed. Kept so the entrypoint answers with a reason instead of
+    /// disappearing from the interface.
     ///
-    /// This lightweight deposit path is used by the MVP UI before full proof
-    /// orchestration is wired in. The commitment is inserted as the left leaf
-    /// of a two-leaf batch, paired with a zero placeholder.
+    /// This path took `amount` tokens and then inserted a `commitment` the
+    /// caller had chosen, with no proof and nothing tying the two together. A
+    /// caller the allowlist vouches for could pay in one stroop against a
+    /// commitment encoding any value, then spend that note with a perfectly
+    /// valid proof and take what other depositors had put in. The circuit was
+    /// never at fault: it checks a balance this entrypoint never established.
+    ///
+    /// Shielding goes through `transact` with `ext_amount > 0`, where the
+    /// circuit enforces `sum(inputs) + publicAmount == sum(outputs)`, so the
+    /// note that comes out is worth exactly what was paid in.
     pub fn deposit(
-        env: &Env,
-        from: Address,
-        amount: i128,
-        commitment: U256,
+        _env: &Env,
+        _from: Address,
+        _amount: i128,
+        _commitment: U256,
     ) -> Result<u32, ContractError> {
-        from.require_auth();
-
-        if amount <= 0 {
-            return Err(ContractError::WrongExtAmount);
-        }
-        let deposit_amount = U256::from_u128(
-            env,
-            u128::try_from(amount).map_err(|_| ContractError::WrongExtAmount)?,
-        );
-        if deposit_amount > storage::get_maximum_deposit(env)? {
-            return Err(ContractError::WrongExtAmount);
-        }
-        Self::ensure_field_element(env, &commitment)?;
-        Self::ensure_commitment_unused(env, &commitment)?;
-
-        let token = storage::get_token(env)?;
-        let token_client = TokenClient::new(env, &token);
-        let this = env.current_contract_address();
-
-        // Record the commitment before calling the token contract. `transfer`
-        // hands control to code this contract does not own, and a token that
-        // calls back into `deposit` would otherwise pass the duplicate check
-        // again and insert the same commitment twice.
-        let zero = U256::from_u32(env, 0);
-        let (commitment_index, _) =
-            MerkleTreeWithHistory::insert_two_leaves(env, commitment.clone(), zero)?;
-        Self::mark_commitment_inserted(env, &commitment)?;
-
-        token_client.transfer(&from, &this, &amount);
-
-        DepositEvent {
-            commitment,
-            pool: this,
-            index: commitment_index,
-            amount_bucket: amount,
-            asset: token,
-        }
-        .publish(env);
-
-        Ok(commitment_index)
+        Err(ContractError::DepositClosed)
     }
 
     /// Execute a shielded transaction with deposit handling

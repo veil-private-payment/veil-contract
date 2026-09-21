@@ -11,10 +11,13 @@
 use asp_membership::{ASPMembership, ASPMembershipClient};
 use circom_groth16_verifier::CircomGroth16Verifier;
 use contract_types::Groth16Proof;
-use policy_fixture::{generate_with_ext_data_hash, generate_with_ext_data_hash_and_amount};
+use policy_fixture::{
+    generate_first_shield, generate_with_ext_data_hash, generate_with_ext_data_hash_and_amount,
+};
 use pool::{
     PoolContract, PoolContractClient,
     contract::hash_ext_data,
+    merkle_with_history::MerkleTreeWithHistory,
     types::{ExtData, Proof},
 };
 use soroban_sdk::{
@@ -22,6 +25,21 @@ use soroban_sdk::{
 };
 
 const LEVELS: u32 = 16;
+
+/// Put the fixture's input notes into the pool tree.
+///
+/// The proof is generated against a tree holding these commitments, so the test
+/// has to rebuild that tree before the spend can verify. It used to do that by
+/// calling `deposit`, which is closed now because it never bound the amount to
+/// the commitment. There is no user-facing way to place a chosen commitment any
+/// more, which is the point, so the test writes the leaves directly in the
+/// pool's own storage instead.
+fn seed_pool_leaf(env: &Env, pool_id: &Address, commitment: U256) {
+    env.as_contract(pool_id, || {
+        MerkleTreeWithHistory::insert_two_leaves(env, commitment, U256::from_u32(env, 0))
+            .unwrap_or_else(|err| panic!("seeding the fixture tree should succeed: {err:?}"));
+    });
+}
 
 fn u256_from_be(env: &Env, bytes: &[u8; 32]) -> U256 {
     U256::from_be_bytes(env, &Bytes::from_array(env, bytes))
@@ -37,7 +55,6 @@ fn a_real_proof_settles_a_shielded_transfer_through_the_pool() {
     let token = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let asset = StellarAssetClient::new(&env, &token);
 
     let asp_id = env.register(ASPMembership, (admin.clone(), LEVELS));
     let asp = ASPMembershipClient::new(&env, &asp_id);
@@ -73,9 +90,8 @@ fn a_real_proof_settles_a_shielded_transfer_through_the_pool() {
     // Rebuild the pool tree the proof was generated against. The fixture notes
     // sit on the even leaves that deposits fill.
     let sender = Address::generate(&env);
-    asset.mint(&sender, &1_000);
     for commitment in fixture.input_commitments() {
-        pool.deposit(&sender, &1, &u256_from_be(&env, commitment));
+        seed_pool_leaf(&env, &pool_id, u256_from_be(&env, commitment));
     }
 
     // Rebuild the allowlist the proof was generated against.
@@ -136,7 +152,6 @@ fn a_real_proof_is_rejected_when_the_spender_is_not_enrolled() {
     let token = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    let asset = StellarAssetClient::new(&env, &token);
 
     let asp_id = env.register(ASPMembership, (admin.clone(), LEVELS));
     let verifier_id = env.register(CircomGroth16Verifier, ());
@@ -168,9 +183,8 @@ fn a_real_proof_is_rejected_when_the_spender_is_not_enrolled() {
         .unwrap_or_else(|err| panic!("fixture generation should succeed: {err}"));
 
     let sender = Address::generate(&env);
-    asset.mint(&sender, &1_000);
     for commitment in fixture.input_commitments() {
-        pool.deposit(&sender, &1, &u256_from_be(&env, commitment));
+        seed_pool_leaf(&env, &pool_id, u256_from_be(&env, commitment));
     }
 
     // Deliberately skip enrollment: the allowlist stays empty.
@@ -251,11 +265,14 @@ fn a_real_proof_withdraws_and_splits_the_protocol_fee() {
     let fixture = generate_with_ext_data_hash_and_amount(ext_hash.to_array(), -10)
         .unwrap_or_else(|err| panic!("fixture generation should succeed: {err}"));
 
+    // The two notes the proof spends, plus the tokens backing them. Deposits
+    // used to do both at once. Now the leaves go in directly and the pool is
+    // funded on its own, which keeps this test about the withdrawal.
     let sender = Address::generate(&env);
-    asset.mint(&sender, &1_000);
     for commitment in fixture.input_commitments() {
-        pool.deposit(&sender, &50, &u256_from_be(&env, commitment));
+        seed_pool_leaf(&env, &pool_id, u256_from_be(&env, commitment));
     }
+    asset.mint(&pool_id, &100);
     for leaf in fixture.membership_leaves() {
         asp.insert_leaf(&u256_from_be(&env, leaf));
     }
@@ -289,4 +306,89 @@ fn a_real_proof_withdraws_and_splits_the_protocol_fee() {
     assert_eq!(token_client.balance(&recipient), 9);
     assert_eq!(token_client.balance(&fee_recipient), 1);
     assert_eq!(token_client.balance(&pool_id), 90);
+}
+
+/// The first value can still get into a pool that holds nothing.
+///
+/// This is the path that replaces the closed `deposit`. Both input notes are
+/// empty, so the circuit skips their Merkle check and the proof binds the root
+/// of an empty pool. The pool pulls the tokens from the sender and the circuit
+/// is what guarantees the note that comes out is worth exactly what went in.
+#[test]
+fn a_real_proof_shields_the_first_value_into_an_empty_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+
+    let admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let asset = StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+    let verifier = env.register(CircomGroth16Verifier, ());
+    let asp_id = env.register(ASPMembership, (admin.clone(), LEVELS));
+    let asp = ASPMembershipClient::new(&env, &asp_id);
+
+    let pool_id = env.register(
+        PoolContract,
+        (
+            admin.clone(),
+            token.clone(),
+            verifier,
+            asp_id.clone(),
+            U256::from_u32(&env, 1_000),
+            admin.clone(),
+            0u32,
+            LEVELS,
+        ),
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let sender = Address::generate(&env);
+    asset.mint(&sender, &1_000);
+
+    let shield_amount: i64 = 40;
+    let ext_data = ExtData {
+        recipient: sender.clone(),
+        ext_amount: I256::from_i32(&env, shield_amount as i32),
+        encrypted_output0: Bytes::new(&env),
+        encrypted_output1: Bytes::new(&env),
+    };
+    let ext_hash = hash_ext_data(&env, &ext_data);
+
+    let fixture = generate_first_shield(ext_hash.to_array(), shield_amount)
+        .unwrap_or_else(|err| panic!("fixture generation should succeed: {err}"));
+
+    // Nothing is seeded. The pool tree is empty and the proof knows it.
+    let public = fixture.public_inputs_be();
+    assert_eq!(u256_from_be(&env, &public[0]), pool.get_root());
+
+    for leaf in fixture.membership_leaves() {
+        asp.insert_leaf(&u256_from_be(&env, leaf));
+    }
+
+    let mut input_nullifiers: Vec<U256> = Vec::new(&env);
+    input_nullifiers.push_back(u256_from_be(&env, &public[3]));
+    input_nullifiers.push_back(u256_from_be(&env, &public[4]));
+
+    let proof_bytes = fixture.proof_bytes();
+    let proof = Proof {
+        proof: Groth16Proof::try_from(Bytes::from_slice(&env, &proof_bytes))
+            .unwrap_or_else(|_| panic!("fixture proof should decode")),
+        root: u256_from_be(&env, &public[0]),
+        input_nullifiers,
+        output_commitment0: u256_from_be(&env, &public[5]),
+        output_commitment1: u256_from_be(&env, &public[6]),
+        public_amount: u256_from_be(&env, &public[1]),
+        ext_data_hash: ext_hash.clone(),
+        asp_membership_root: u256_from_be(&env, &public[7]),
+    };
+
+    assert_eq!(token_client.balance(&pool_id), 0);
+    pool.transact(&proof, &ext_data, &sender);
+
+    assert_eq!(token_client.balance(&pool_id), shield_amount as i128);
+    assert_eq!(token_client.balance(&sender), 1_000 - shield_amount as i128);
+    assert!(pool.has_commitment(&u256_from_be(&env, &public[5])));
 }

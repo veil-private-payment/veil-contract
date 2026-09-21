@@ -96,6 +96,9 @@ pub struct ExitEvent {
 /// The event carries only indexer-safe metadata needed to reconstruct
 /// commitment ordering without exposing sender-specific data.
 #[contractevent(topics = ["Deposit"])]
+/// No longer emitted: the `deposit` entrypoint it belonged to is closed.
+/// Kept so an indexer replaying ledgers from before that change still has the
+/// type to decode them with.
 #[derive(Clone)]
 pub struct DepositEvent {
     /// The commitment inserted into the Merkle tree
