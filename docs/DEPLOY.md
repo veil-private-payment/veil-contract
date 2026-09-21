@@ -34,9 +34,12 @@ Both trees must be created at the depth the circuit was compiled for, which is
 and a mismatch is not rejected at deploy time: it surfaces later as every real
 proof failing, because the roots cannot agree. Record the value you used.
 
-Depth 16 is also the deepest pool the constructor can create. It writes two
-ledger entries per level, and a Soroban transaction may write 50, so depth 17
-fails with `write ledger entries: 52 > 50`.
+Depth 16 is set by the circuit, not by the chain. An earlier version of this
+guide said depth 17 failed with `write ledger entries: 52 > 50`. The transaction
+write limit is 200 now, read from the `ConfigSetting` ledger entry on
+2026-09-21, and the same wasm deployed at depth 17, 20, 24 and 32. Use 16 anyway,
+because the committed proving and verifying keys are for a depth-16 circuit and a
+mismatch surfaces later as every proof failing.
 
 ```sh
 stellar contract deploy --wasm target/wasm32v1-none/release/circom_groth16_verifier.wasm \

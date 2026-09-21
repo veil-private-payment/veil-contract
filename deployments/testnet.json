@@ -8,7 +8,7 @@
     "name": "policy_tx_2_2",
     "levels": 16,
     "publicInputs": 9,
-    "note": "levels applies to the pool tree and the ASP membership tree alike, and 16 is the deepest the pool constructor can create in one transaction"
+    "note": "levels applies to the pool tree and the ASP membership tree alike, and both must match the depth the circuit was compiled for. Depth is a circuit choice, not a chain limit: see treeDepthProbe."
   },
   "contracts": {
     "pool": "CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G",
@@ -32,7 +32,9 @@
     "poolExitUpgradeUpload": "a73109accb367d7764c1bbff8ef31d9748f7b5885d55968f86ecafbc00cb0fd5",
     "poolExitUpgrade": "72c8983a1d4f307dd882c7b0755372a5b762446b309cc04241a39ef15c1522a2",
     "aspRevocationUpload": "4dc77e414ffddd8f7ac77dcca3cd77360ac7d36963c16fc73c4da0d5ca517945",
-    "aspAdminToFaucet": "d6c9bf80",
+    "aspDeployed": "ec6f84264a2ba8c6d39a5b8b7084f3944a3ff12f3113bed50847f1632dc9cea4",
+    "faucetDeployed": "c400ecfde5296590a8c840eb0cf73388d0667e821b358c0812b61b1281e0dd5d",
+    "aspAdminToFaucet": "d6c9bf809aa59f82254246342468dfaccaefa89da3c1d000046f525709d312ed",
     "poolRepointedToNewAsp": "8553e40273805507cb98ab821e18d96331233e881e0befe4c041517eeacdb1cf"
   },
   "supersededDepth10Deployment": {
@@ -246,6 +248,92 @@
       "note": "The two mainnet pools run different wasm (d5e9db07) built from a different source, and both hold a zero balance. They are not upgraded here and are not in use.",
       "xlm": "CATFLEE72MGX5HTIOMW35SIKJST4ZP32QNVI5QHTFMGHOA72M6JNJMYQ",
       "usdc": "CCZ5NLMX7OTDFDYVGU5JAZK667V5DDMDVPYL4IK6UF6MRV62R4KFIUCL"
+    }
+  },
+  "revocationRun": {
+    "note": "Revocation exercised on a throwaway allowlist, because revoking closes insert_leaf for good and the live faucet depends on it.",
+    "contract": "CBYUTPDEXTMK6DD53FNY4KHPGY3F6MZFVM27LSRRZJUKBADAZEI6FGBL",
+    "transactions": {
+      "deployed": "2f38e9868f15976025ca1c077d7b817bae9a2e1a71ae24b56467f382605ba9c6",
+      "insertLeaf": "cea9f413e06bd394e9d89da1c6f389fa3930eac74986648c796e481d9c54e4d6",
+      "revokeLeaf": "0b61545b64f349755d4511b027bb56f45dbc8db05c7de1705c5e1f108937edf2",
+      "publishLeaf": "ffc4c7801677b5a8c5c725360a9e0471b62b8cb9cd9b43fdcefd780da9056050"
+    },
+    "afterwards": "is_operator_maintained returns true on that contract, and insert_leaf is closed."
+  },
+  "depth16AcceptedAndRefusedRun": {
+    "note": "Accepted spend and two on-chain refusals, all at depth 16 against the same verifier. The earlier refusals live under supersededDepth10Deployment, which left the accepted case and the refused cases at different tree depths.",
+    "ranAt": "2026-09-18",
+    "verifier": "CDKW7LEKFSFNOB36GDI5QUI5PONPECIJZAE2EBRYJYP3G3YJQJBLU53F",
+    "spender": "GAYA5QTJF5R36QHGICQCJTNENFS3N2NZS3SHEEAM6DVQ3R2FQXU3Q5FK",
+    "accepted": {
+      "pool": "CD24ZLWNGRKG3TT2P5URZPXXYZSBM3CNX3Q7GZG5GVXNGLFJMSCYEWOQ",
+      "aspMembership": "CAK743PUEVVWXGTD4FEXEVNF6AJDNMOHW6BAUMKZKB4IXLVPLB2SQSSJ",
+      "spendAccepted": "461ec388efaf098c4e5713a1b20cc7e238cf4f031db5a95c4e96aaf9d1768cfe",
+      "ledger": 4745510
+    },
+    "refusedAfterTheAllowlistMoved": {
+      "note": "Signed while the allowlist root still matched the proof, then another member was enrolled and only then was the signed transaction submitted.",
+      "pool": "CA5F7QOOV4D5XQM4WMVZRFCLJK5REOUAR7O2BRQONDX76V4WUK6422KY",
+      "aspMembership": "CA5E5UG4L2I425M6BGENJFJAHCD6NF67MYHCGXAUOGW7PMDOH3BPQR3K",
+      "allowlistMoved": "c87bc7b0203238f260321a3a30decb30edb89056ebfc5cd1d757391b4fd2e944",
+      "spendRefused": "1dfcbaf43d67cf6efd18fb76658c15837e9c0e46cbc45ea11f129cc140b19e29",
+      "ledger": 4745555,
+      "result": "successful false, invoke_host_function trapped"
+    },
+    "refusedAfterRevocation": {
+      "note": "revoke_leaf published the root of an allowlist rebuilt with nobody in it, so the spender was not enrolled when the signed spend arrived. This is the refusal the SOW describes.",
+      "pool": "CBGWVADJBM74WHO6R7NF6HJHP4KPDWRZEKZXZR6EYL5QKJ4AHTOBTXJE",
+      "aspMembership": "CBC3VRYHA72XFM2YUJNMIXDQ4A2HW7LMBGFRWFE46YYUOOMVTILSQW7A",
+      "revokeLeaf": "78c84cc01e83a00ec1eeb345f87f7f5c4e3eb8dcc9f0b855c814e6db9164dc09",
+      "spendRefused": "77d3292c2fe3bb5f4a8f9f5c73ff87bc0cd5e7ff8a2d79304f07b97e5c263099",
+      "ledger": 4745596,
+      "result": "successful false, invoke_host_function trapped"
+    }
+  },
+  "treeDepthProbe": {
+    "note": "This repository used to state that depth 16 was the deepest pool the constructor could create, because it writes two ledger entries per level and a transaction allowed 50 writes. The transaction write limit read from the ConfigSetting ledger entry on 2026-09-21 is 200, and the same wasm deployed at every depth tried.",
+    "ranAt": "2026-09-19",
+    "txMaxWriteLedgerEntries": 200,
+    "wasm": "179289800a9f0eebdabc58ee295577214a253360e383acdbd3582bee91dfabde",
+    "results": [
+      {
+        "levels": 17,
+        "contract": "CCDCTGV7KVC6C6S6RPMVCVZVVHDHDQ44BTF4ZCAXLK4YLXJ73INBYMV4",
+        "tx": "66edbb4aad05c2a9fa5610c11f8f480d073df8a6ece11671660972f1e47dbbf5",
+        "remainingLeaves": 131072
+      },
+      {
+        "levels": 20,
+        "tx": "8489004a2c8e3c5fc242e4b67783db151ab726d3d29af1e9909d18bff75670ed"
+      },
+      {
+        "levels": 24,
+        "tx": "0872223f4102745beb53fb99e9d7533f147559dfe21bf58b1c95a101fd8eee05"
+      },
+      {
+        "levels": 32,
+        "contract": "CDEOLGQ5NFWXJC7I7LNSMNVSJMAMGB7NI6TOYFTJ46GMWTDEBJ3EV6XT",
+        "tx": "932b0470a5d13478aa27cfac2d6bfbd396b890b1b6f0e11936855882335a329f",
+        "remainingLeaves": 4294967296
+      }
+    ],
+    "conclusion": "Depth 16 stays because the committed keys are for a depth-16 circuit. Going deeper is a circuit recompile and a fresh trusted setup, not a protocol change."
+  },
+  "resourceMeasurements": {
+    "note": "Measured on testnet with simulateTransaction at instructionLeeway 0, reading transactionData.resources.instructions. Answers the feasibility questions the next phase was resting on.",
+    "ranAt": "2026-09-21",
+    "txMaxInstructions": 400000000,
+    "groth16Verify9PublicInputs": 36911346,
+    "transactDepth16": 62623786,
+    "perTreeLevel": 1499000,
+    "blendV2Submit": 1911602,
+    "defindexVaultDeposit": 2479885,
+    "heaviestPathEstimateDepth20": 71160000,
+    "contractAsFundingAccount": {
+      "note": "A contract supplied to Blend and deposited into a DeFindex vault under its own address, using authorize_as_current_contract for the token transfer one level down. No approve-first flow needed.",
+      "blendSubmit": "be9f8e46b29af47a79218ad2c7222fd1a6ce0f87433932fc10b18474da182137",
+      "defindexDeposit": "890b4540415fb18c649c876fbaada43ff2759294767662d709a2637960dd1c17"
     }
   }
 }

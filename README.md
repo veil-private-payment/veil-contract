@@ -112,9 +112,9 @@ recorded runs are kept in the manifest under `supersededDepth10Deployment`.
 | Contract | ID |
 |---|---|
 | Pool | `CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G` |
-| ASP membership | `CBQXK3FHJDQ3SM2Q6OT3NU527B3TY6YWBCBMM4NSV3ZYNUHW6YN5W2UD` |
+| ASP membership | `CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB` |
 | Groth16 verifier | `CDKW7LEKFSFNOB36GDI5QUI5PONPECIJZAE2EBRYJYP3G3YJQJBLU53F` |
-| Faucet | `CBSPSGKVO77BKK357ECZX2LW5PCAGK2QHOPNHNA3Y2PNPTYWA2UWULIU` |
+| Faucet | `CBQNDLJFT3WIAWMLCGJX7TAPOFLGNRAV73EUF6VVZM33SMSUYHAWW56N` |
 
 The allowlist admin role is held by the faucet, so a tester enrols themselves.
 Both roots were checked against the proof before the spend was submitted, and
@@ -126,6 +126,29 @@ the allowlist root was built entirely through faucet calls.
 | Deposit | [`49f31aa2…`](https://stellar.expert/explorer/testnet/tx/49f31aa2a1065065dcdb233b5444837d0114e5d3a5773e981c1d049317911ffc) |
 | Self-onboard through the faucet | [`04d3958a…`](https://stellar.expert/explorer/testnet/tx/04d3958a664723c4f64b3250cd59427a2ca2de47393a993e2936283fea8bde40) |
 | Shielded spend, real depth-16 proof | [`64afcf21…`](https://stellar.expert/explorer/testnet/tx/64afcf21c7adbd1bd144db3b978da85a1a510d1785a8ac39c193ed3b0766f428) |
+
+### Accepted And Refused At Depth 16
+
+The depth-10 deployment below carries the refusals and the deployment above
+carries the accepted spend, which left the two at different tree depths. This
+run puts both at depth 16 against the same verifier. Recorded under
+`depth16AcceptedAndRefusedRun` in the manifest.
+
+| Step | Result | Transaction |
+|---|---|---|
+| Shielded spend, real depth-16 proof | accepted | [`461ec388…`](https://stellar.expert/explorer/testnet/tx/461ec388efaf098c4e5713a1b20cc7e238cf4f031db5a95c4e96aaf9d1768cfe) |
+| Spend submitted after the allowlist root moved | **refused on chain** | [`1dfcbaf4…`](https://stellar.expert/explorer/testnet/tx/1dfcbaf43d67cf6efd18fb76658c15837e9c0e46cbc45ea11f129cc140b19e29) |
+| Spend submitted after the spender was revoked | **refused on chain** | [`77d3292c…`](https://stellar.expert/explorer/testnet/tx/77d3292c2fe3bb5f4a8f9f5c73ff87bc0cd5e7ff8a2d79304f07b97e5c263099) |
+
+Each refusal needed its own pool, because an accepted spend burns the nullifiers
+the fixture proof carries. Each was signed while the allowlist still matched the
+proof, so simulation passed, and the allowlist was changed before submission.
+Both land with `successful: false` and an `invoke_host_function: trapped`
+result.
+
+The second is the case the SOW describes. `revoke_leaf` published the root of an
+allowlist rebuilt with nobody in it, so the spender was not enrolled by the time
+the spend executed.
 
 ### Recorded Transactions From The Depth-10 Deployment
 
@@ -244,11 +267,17 @@ point of refusing early.
   before the pool holds value; the scripts to run and verify one are in
   [`docs/CEREMONY.md`](docs/CEREMONY.md), and what they cannot supply is
   independent participants.
-- Merkle depth 16, so 65,536 leaves per pool. A deposit uses two leaves and a
-  shielded transaction uses two, so that is 32,768 operations. Depth 16 is the
-  ceiling the pool constructor can create in one transaction: it writes two
-  ledger entries per level and Soroban allows 50 writes. Going deeper needs the
-  per-level arrays packed into single entries.
+- Merkle depth 16, so 65,536 leaves per pool. Depth 16 is what the circuit is
+  compiled for, and the pool tree and the allowlist tree have to match it. It is
+  not a deploy-time ceiling. This file used to say a deeper pool could not be
+  constructed, because the constructor writes two ledger entries per level and a
+  transaction allowed 50 writes. The limit is now 200, read from the
+  `ConfigSetting` ledger entry on 2026-09-21, and the same wasm deployed at depth
+  17, 20, 24 and 32, the last reporting 4,294,967,296 free leaves:
+  [depth 17](https://stellar.expert/explorer/testnet/tx/66edbb4aad05c2a9fa5610c11f8f480d073df8a6ece11671660972f1e47dbbf5),
+  [depth 32](https://stellar.expert/explorer/testnet/tx/932b0470a5d13478aa27cfac2d6bfbd396b890b1b6f0e11936855882335a329f).
+  Growing a pool costs a circuit recompile and a fresh trusted setup, not a
+  protocol change.
 - A full tree closes `transact`, because every shielded transaction writes two
   output commitments. `exit` is the way out of a full pool: same proof and
   nullifier checks, the recipient is paid, and the transaction's output notes
