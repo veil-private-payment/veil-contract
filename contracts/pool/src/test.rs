@@ -976,6 +976,18 @@ impl ReentrantToken {
     }
 
     pub fn transfer(env: Env, from: Address, _to: Address, amount: i128) {
+        // Withdrawal mode: call straight back into the pool while it is paying
+        // out. Any entry counts, so a read is enough.
+        if let Some(pool) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&symbol_short!("payout"))
+        {
+            env.storage().instance().remove(&symbol_short!("payout"));
+            PoolContractClient::new(&env, &pool).get_root();
+            return;
+        }
+
         let armed: Option<Address> = env.storage().instance().get(&symbol_short!("pool"));
         let Some(pool) = armed else {
             return;
@@ -993,8 +1005,27 @@ impl ReentrantToken {
         PoolContractClient::new(&env, &pool).deposit(&from, &amount, &commitment);
     }
 
-    pub fn balance(_env: Env, _id: Address) -> i128 {
-        0
+    /// Point the token at a pool to call back into during the payout.
+    ///
+    /// The withdrawal path is the other place this contract hands control to a
+    /// token it does not own, and it does so after every state change is
+    /// committed. This arms the worst case for that path.
+    pub fn arm_payout(env: Env, pool: Address) {
+        env.storage()
+            .instance()
+            .set(&symbol_short!("payout"), &pool);
+    }
+
+    /// Stop calling back, so the same withdrawal can be retried.
+    pub fn disarm_payout(env: Env) {
+        env.storage().instance().remove(&symbol_short!("payout"));
+    }
+
+    pub fn balance(env: Env, _id: Address) -> i128 {
+        // Enough to cover any payout these tests ask for, so the withdrawal
+        // reaches the transfer instead of stopping short of it.
+        let _ = env;
+        1_000_000
     }
 }
 
@@ -1037,6 +1068,79 @@ fn a_reentrant_token_cannot_reopen_the_closed_deposit_path() {
         Err(Ok(ContractError::DepositClosed))
     );
     assert!(!pool.has_commitment(&commitment));
+}
+
+/// A token that calls back into the pool while it is paying out leaves nothing
+/// behind.
+///
+/// The withdrawal path hands control to a token this contract does not own, and
+/// it does so only after the nullifiers are spent and the output commitments
+/// are in the tree. What actually stops the nested call here is the host, which
+/// refuses re-entry outright, so this asserts the outcome rather than the
+/// ordering: the refusal unwinds the transfer, the transfer unwinds the whole
+/// call, and the pool is never left half applied, with the money gone and the
+/// notes still spendable or the notes burned and no payout. The ordering in
+/// `transact` is what would carry the property if the host ever stopped.
+#[test]
+fn a_reentrant_token_cannot_leave_a_withdrawal_half_applied() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token = env.register(ReentrantToken, ());
+    let asp_membership_address = env.register(ASPMembership, (admin.clone(), 8u32));
+    let asp_membership_client = ASPMembershipClient::new(&env, &asp_membership_address);
+    let verifier = env.register(MockGroth16Verifier, ());
+    let setup = TestSetup {
+        admin: admin.clone(),
+        token: token.clone(),
+        verifier,
+        asp_membership_address,
+        asp_membership_client,
+    };
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1_000), 8);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let recipient = Address::generate(&env);
+    let ext = mk_ext_data(&env, recipient, -10);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root: pool.get_root(),
+        input_nullifiers: vec![
+            &env,
+            U256::from_u32(&env, 0x901),
+            U256::from_u32(&env, 0x902),
+        ],
+        output_commitment0: U256::from_u32(&env, 0xA01),
+        output_commitment1: U256::from_u32(&env, 0xA02),
+        public_amount: pool.get_public_amount(&ext.ext_amount),
+        ext_data_hash: compute_ext_hash(&env, &ext),
+        asp_membership_root: setup.asp_membership_client.get_root(),
+    };
+
+    let root_before = pool.get_root();
+    ReentrantTokenClient::new(&env, &token).arm_payout(&pool_id);
+
+    let sender = Address::generate(&env);
+    assert!(pool.try_transact(&proof, &ext, &sender).is_err());
+
+    // Nothing survived the unwind: no nullifier spent, no commitment inserted,
+    // and the tree is where it was.
+    assert!(!pool.has_nullifier(&U256::from_u32(&env, 0x901)));
+    assert!(!pool.has_nullifier(&U256::from_u32(&env, 0x902)));
+    assert!(!pool.has_commitment(&U256::from_u32(&env, 0xA01)));
+    assert!(!pool.has_commitment(&U256::from_u32(&env, 0xA02)));
+    assert_eq!(pool.get_root(), root_before);
+
+    // The control. Everything above is unchanged except that the token no
+    // longer calls back, and the same withdrawal goes through. Without this the
+    // test would pass just as well if the transaction were failing for some
+    // unrelated reason.
+    ReentrantTokenClient::new(&env, &token).disarm_payout();
+    pool.transact(&proof, &ext, &sender);
+    assert!(pool.has_nullifier(&U256::from_u32(&env, 0x901)));
+    assert!(pool.has_commitment(&U256::from_u32(&env, 0xA01)));
+    assert_ne!(pool.get_root(), root_before);
 }
 
 // ─── Exit path ───────────────────────────────────────────────────────────────
