@@ -214,6 +214,28 @@ make setup-policy-circuit-keys
 See [circuits/README.md](circuits/README.md) for the public input order and
 the trusted setup limitation.
 
+## Shielding
+
+`deposit` is closed. It took an amount of tokens and then inserted a commitment
+the caller had chosen, with nothing binding the two, so a caller the allowlist
+vouches for could pay in one stroop against a commitment encoding any value and
+later spend it for the full amount. It now returns `DepositClosed`.
+
+Value enters through `transact` with a positive external amount. The circuit
+enforces `sum(inputs) + publicAmount == sum(outputs)`, so the note that comes
+out is worth what was paid in. A pool that holds nothing is not a special case:
+the circuit skips the Merkle check for a zero-amount input, so the first shield
+proves against two empty notes and the empty root the pool reports.
+
+| Step | Transaction |
+|---|---|
+| Upgrade closing `deposit` on the deployed pool | [`7fc4b1bc…`](https://stellar.expert/explorer/testnet/tx/7fc4b1bcdf70b7031796a5117ff99d319d219da5b053e634b987adb9aac9185e) |
+| First value into an empty pool, real proof, 0 to 40 | [`2c33dfa1…`](https://stellar.expert/explorer/testnet/tx/2c33dfa1148ccdf26b2c63a26e6b0aca4e02d2960e2dde25c8f5ad898abf73d1) |
+
+A call to `deposit` is now refused during simulation, so it costs nothing and
+never reaches the ledger. There is no failed transaction to link, which is the
+point of refusing early.
+
 ## Status And Limitations
 
 - Single admin key. No multisig, no timelock, no pause.
