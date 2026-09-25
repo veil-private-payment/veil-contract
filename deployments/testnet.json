@@ -35,6 +35,7 @@
     "aspDeployed": "ec6f84264a2ba8c6d39a5b8b7084f3944a3ff12f3113bed50847f1632dc9cea4",
     "faucetDeployed": "c400ecfde5296590a8c840eb0cf73388d0667e821b358c0812b61b1281e0dd5d",
     "aspAdminToFaucet": "d6c9bf809aa59f82254246342468dfaccaefa89da3c1d000046f525709d312ed",
+    "faucetOnboardOnNewAsp": "9d3a4ccc097e294c8833e6db80a10b279011f679ea3d327c213f6f90e2069acb",
     "poolRepointedToNewAsp": "8553e40273805507cb98ab821e18d96331233e881e0befe4c041517eeacdb1cf"
   },
   "supersededDepth10Deployment": {
