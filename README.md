@@ -6,8 +6,7 @@ pool on Stellar.
 This repository holds the settlement layer only: the shielded pool contract,
 the Association Set Provider membership contract that gates every spend, the
 Groth16/BN254 verifier contract, and the circuit that produces the proofs they
-check. The client SDK, frontend, indexer, and relayer live elsewhere and are
-out of scope here.
+check. Everything that sits above the settlement layer is out of scope here.
 
 The protocol direction is inspired by Nethermind's Stellar Private Payments
 research implementation.
@@ -16,7 +15,7 @@ research implementation.
 
 | Path | Role |
 |---|---|
-| `contracts/pool` | Shielded pool: storage, admin surface, deposit, shielded transact, and the full-tree exit |
+| `contracts/pool` | Shielded pool: storage, admin surface, shielded transact, and the full-tree exit |
 | `contracts/verifier` | Groth16 verifier over BN254, embeds the circuit verifying key at build time |
 | `contracts/mock-verifier` | Demo-only verifier fallback for local tests, performs no verification |
 | `circuit-keys` | Key parsing helpers shared by the verifier build script |
@@ -68,11 +67,13 @@ convenience and not a compliance posture.
 
 ### External Calls
 
-The token contract is code this pool does not own. Both paths that call it now
-finish their state changes first: `deposit` records the commitment before
-pulling funds, and a withdrawal inserts the output commitments and spends the
-nullifiers before paying anyone. A regression test drives a token that
-re-enters `deposit` and asserts the commitment is not inserted twice.
+The token contract is code this pool does not own. A withdrawal inserts the
+output commitments and spends the nullifiers before paying anyone, so a token
+that calls back into the pool mid-payout finds the state already committed. Two
+regression tests drive a re-entrant token:
+`a_reentrant_token_cannot_leave_a_withdrawal_half_applied` covers that ordering,
+and `a_reentrant_token_cannot_reopen_the_closed_deposit_path` asserts the closed
+`deposit` entrypoint stays closed under re-entry.
 
 ## Client Views
 

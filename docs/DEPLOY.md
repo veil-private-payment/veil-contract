@@ -109,13 +109,14 @@ proof bytes, and every public input as decimal strings.
 
 ## 5. Rebuild The State The Proof Assumes
 
-Deposit the input commitments in order, then enroll the membership leaves in
-order:
+`deposit` is closed and returns `DepositClosed`, so commitments can no longer be
+inserted directly. Value enters through `transact` with a positive external
+amount, which means seeding a pool now costs a proof. The README section on
+shielding shows a worked example against an empty pool.
+
+Enroll the membership leaves in order:
 
 ```sh
-stellar contract invoke --id <POOL> --source veil-instaward-1 --network testnet --send=yes \
-  -- deposit --from <ADMIN> --amount 1 --commitment <COMMITMENT>
-
 stellar contract invoke --id <ASP> --source veil-instaward-1 --network testnet --send=yes \
   -- insert_leaf --leaf <MEMBERSHIP_LEAF>
 ```
