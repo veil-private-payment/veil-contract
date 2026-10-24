@@ -39,6 +39,21 @@ jobs:
       - name: Build contract wasm
         run: cargo build --release --target wasm32v1-none -p pool -p asp-membership -p circom-groth16-verifier --locked
 
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # Fails on any advisory not accepted in .cargo/audit.toml, where each
+      # accepted one is listed with the reason.
+      - name: Audit Cargo.lock
+        run: cargo audit
+
   circuit:
     name: Circuit and proof round trip
     runs-on: ubuntu-latest

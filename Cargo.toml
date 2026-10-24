@@ -10,6 +10,7 @@ members = [
     "contracts/verifier",
     "poseidon2",
     "tools/policy-fixture",
+    "services/indexer",
 ]
 resolver = "3"
 
@@ -47,6 +48,16 @@ sha2 = { version = "0.11.0", default-features = false }
 soroban-utils = { path = "contracts/soroban-utils" }
 zkhash = { path = "poseidon2" }
 soroban-sdk = { version = "26", default-features = false, features = ["hazmat"] }
+
+# Off-chain services. Kept apart from the contract dependencies above so the
+# contract crates never pull in a runtime, a database driver or a CLI parser.
+clap = { version = "4.6", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+stellar-strkey = "0.0.16"
+stellar-xdr = { version = "=26.0.1", default-features = false, features = ["std", "curr", "base64"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 [profile.release]
 opt-level = "z"
