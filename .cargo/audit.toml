@@ -1,0 +1,19 @@
+# Advisories that `cargo audit` reports against Cargo.lock and that are
+# accepted, each with the reason. None of them is in the dependency tree of the
+# services under `services/` (check with `cargo tree -p <service> -e normal`).
+# Revisit whenever Cargo.lock changes.
+[advisories]
+ignore = [
+    # crossbeam-epoch 0.9.18, rkyv 0.8.16, ruzstd 0.8.3: reached only through
+    # ark-circom and wasmer in tools/policy-fixture, which proves fixtures on a
+    # developer machine or in CI and never runs on untrusted input.
+    "RUSTSEC-2026-0204",
+    "RUSTSEC-2026-0233",
+    "RUSTSEC-2026-0234",
+    "RUSTSEC-2026-0235",
+    "RUSTSEC-2026-0344",
+    # crypto-bigint 0.5.5: reached through k256 in soroban-env-host, which the
+    # contracts only link for tests. Deployed wasm does not contain it, and the
+    # fix (0.7) needs a soroban-env-host release that adopts it.
+    "RUSTSEC-2026-0387",
+]

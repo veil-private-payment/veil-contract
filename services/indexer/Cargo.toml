@@ -1,0 +1,31 @@
+[package]
+name = "veil-indexer"
+description = "Reads the Veil pool and allowlist events into a database"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "veil-indexer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+stellar-strkey.workspace = true
+stellar-xdr.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+asp-membership.workspace = true
+pool.workspace = true
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[lints]
+workspace = true
