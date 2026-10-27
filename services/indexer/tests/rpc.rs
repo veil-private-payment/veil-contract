@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use veil_indexer::event::DecodeError;
-use veil_indexer::rpc::{EventSource, Retry, RpcClient, RpcError, Start};
+use veil_indexer::rpc::{EventSource, GetEventsResult, Retry, RpcClient, RpcError, Start};
 use veil_indexer::source::Source;
 use wiremock::matchers::{body_partial_json, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -203,5 +203,137 @@ async fn a_page_size_rpc_would_refuse_is_caught_before_sending() {
             .await
             .expect("recorded")
             .is_empty()
+    );
+}
+
+/// The recorded result, edited by `change`, converted with the SAC filter.
+fn convert(change: impl FnOnce(&mut Value)) -> Result<veil_indexer::rpc::EventsPage, RpcError> {
+    let mut result = recorded()["result"].clone();
+    change(&mut result);
+    let result: GetEventsResult = serde_json::from_value(result).expect("result shape");
+    result.into_page(&sac())
+}
+
+#[test]
+fn events_of_a_failed_call_are_dropped() {
+    let page = convert(|result| {
+        result["events"][0]["inSuccessfulContractCall"] = json!(false);
+        result["events"][1]["inSuccessfulContractCall"] = json!(true);
+    })
+    .expect("page");
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(
+        page.events[0].position.to_string(),
+        "0023234244063002624-0000000001"
+    );
+}
+
+#[test]
+fn a_ledger_that_disagrees_with_the_event_id_is_refused() {
+    let error =
+        convert(|result| result["events"][0]["ledger"] = json!(5_409_645)).expect_err("refused");
+    assert!(matches!(error, RpcError::LedgerMismatch { .. }), "{error}");
+}
+
+#[test]
+fn a_malformed_cursor_or_event_id_is_refused() {
+    let error = convert(|result| result["cursor"] = json!("not-a-cursor")).expect_err("cursor");
+    assert!(matches!(error, RpcError::Position(_)), "{error}");
+    let error = convert(|result| result["events"][1]["id"] = json!("12")).expect_err("id");
+    assert!(matches!(error, RpcError::Position(_)), "{error}");
+}
+
+#[test]
+fn a_body_that_is_not_xdr_is_refused() {
+    let error = convert(|result| result["events"][0]["value"] = json!("bm90IHhkcg=="))
+        .expect_err("refused");
+    assert!(matches!(error, RpcError::Decode { .. }), "{error}");
+}
+
+#[tokio::test]
+async fn a_response_without_the_fields_the_indexer_needs_is_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "events": [], "latestLedger": 10 }
+        })))
+        .mount(&server)
+        .await;
+    let error = client(&server)
+        .events(Start::Ledger(1), &sac(), 2)
+        .await
+        .expect_err("missing cursor");
+    assert!(matches!(error, RpcError::Transport { .. }), "{error}");
+}
+
+#[tokio::test]
+async fn a_response_with_neither_result_nor_error_is_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "jsonrpc": "2.0", "id": 1 })),
+        )
+        .mount(&server)
+        .await;
+    let error = client(&server)
+        .events(Start::Ledger(1), &sac(), 2)
+        .await
+        .expect_err("empty");
+    assert!(matches!(error, RpcError::EmptyResponse), "{error}");
+}
+
+#[tokio::test]
+async fn a_client_error_status_is_not_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = client(&server)
+        .events(Start::Ledger(1), &sac(), 2)
+        .await
+        .expect_err("refused");
+    assert!(
+        matches!(
+            error,
+            RpcError::Status {
+                status: 400,
+                attempts: 1,
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_server_is_retried_then_reported() {
+    // Nothing listens on a port the OS just released.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("addr")
+        .port();
+    let retry = Retry {
+        attempts: 2,
+        first_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(1),
+    };
+    let rpc = RpcClient::new(
+        &format!("http://127.0.0.1:{port}"),
+        Duration::from_secs(2),
+        retry,
+    )
+    .expect("client");
+    let error = rpc
+        .events(Start::Ledger(1), &sac(), 2)
+        .await
+        .expect_err("unreachable");
+    assert!(
+        matches!(error, RpcError::Transport { attempts: 2, .. }),
+        "{error}"
     );
 }

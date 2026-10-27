@@ -199,6 +199,12 @@ impl FakeRpc {
         }
     }
 
+    /// Sets the newest ledger the fake server has.
+    pub fn with_latest_ledger(mut self, ledger: u32) -> Self {
+        self.latest_ledger = ledger;
+        self
+    }
+
     pub fn failing_after(mut self, pages: usize) -> Self {
         self.fail_after = Some(pages);
         self
@@ -258,5 +264,50 @@ impl EventSource for FakeRpc {
             latest_ledger: self.latest_ledger,
             oldest_ledger: 1,
         })
+    }
+}
+
+/// Serves a fixed list of pages, one per request, whatever is asked. For
+/// sources that misbehave in ways a real server should not.
+pub struct ScriptedRpc {
+    pages: Mutex<std::collections::VecDeque<EventsPage>>,
+}
+
+impl ScriptedRpc {
+    pub fn new(pages: Vec<EventsPage>) -> Self {
+        Self {
+            pages: Mutex::new(pages.into()),
+        }
+    }
+}
+
+impl EventSource for ScriptedRpc {
+    async fn events(
+        &self,
+        _start: Start,
+        _contracts: &[String],
+        _limit: u32,
+    ) -> Result<EventsPage, RpcError> {
+        self.pages
+            .lock()
+            .expect("lock")
+            .pop_front()
+            .ok_or(RpcError::EmptyResponse)
+    }
+}
+
+/// Pages of RPC-sourced events with the given cursor and latest ledger.
+pub fn page(events: Vec<ContractEvent>, cursor: EventPosition, latest_ledger: u32) -> EventsPage {
+    EventsPage {
+        events: events
+            .into_iter()
+            .map(|event| ContractEvent {
+                source: Source::Rpc,
+                ..event
+            })
+            .collect(),
+        cursor,
+        latest_ledger,
+        oldest_ledger: 1,
     }
 }

@@ -6,7 +6,9 @@
 
 mod common;
 
-use common::{ALLOWLIST, FakeRpc, POOL, TestDb, contracts, end_of_ledger, history};
+use common::{
+    ALLOWLIST, FakeRpc, POOL, ScriptedRpc, TestDb, contracts, end_of_ledger, history, page,
+};
 use stellar_xdr::curr::{ScVal, ScVec};
 use veil_indexer::event::Decoded;
 use veil_indexer::ingest::{Follower, IngestError, RPC_STREAM};
@@ -436,5 +438,188 @@ async fn a_stream_without_a_checkpoint_needs_a_start_ledger() {
     .expect_err("no start");
     assert!(matches!(error, IngestError::NoStart { .. }), "{error}");
     assert!(rpc.requests().is_empty());
+    db.drop().await;
+}
+
+async fn sync_with<S: veil_indexer::rpc::EventSource>(
+    db: &TestDb,
+    source: &S,
+    page_size: u32,
+) -> Result<veil_indexer::ingest::SyncReport, IngestError> {
+    let contracts = contracts();
+    Follower {
+        source,
+        store: &db.store,
+        contracts: &contracts,
+        stream: RPC_STREAM,
+        page_size,
+    }
+    .sync_to_tip(Some(1))
+    .await
+}
+
+#[tokio::test]
+async fn empty_ledgers_still_move_the_checkpoint_one_scan_window_at_a_time() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    // No events, 20,000 ledgers, 5,000 scanned per request: four pages.
+    let rpc = FakeRpc::new(Vec::new()).with_latest_ledger(20_001);
+    let report = sync_with(&db, &rpc, 10).await.expect("sync");
+    assert_eq!(report.pages, 4);
+    assert_eq!(report.inserted, 0);
+    let checkpoint = db.store.checkpoint(RPC_STREAM).await.expect("read");
+    assert_eq!(checkpoint.map(|c| c.cursor), Some(end_of_ledger(20_001)));
+    // Each request resumed from the previous page's cursor.
+    let requests = rpc.requests();
+    assert_eq!(requests[0], Start::Ledger(1));
+    assert_eq!(requests[1], Start::After(end_of_ledger(5_001)));
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_full_page_at_the_latest_ledger_is_not_taken_for_the_tip() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    // The first ledger with several events (one transact emits a commitment,
+    // a nullifier and a settlement per input).
+    let events = history();
+    let ledger = events
+        .iter()
+        .map(|event| event.position.ledger())
+        .find(|ledger| {
+            events
+                .iter()
+                .filter(|event| event.position.ledger() == *ledger)
+                .count()
+                >= 3
+        })
+        .expect("a ledger with three events");
+    let in_ledger: Vec<_> = events
+        .into_iter()
+        .filter(|event| event.position.ledger() == ledger)
+        .collect();
+
+    // That ledger is the server's newest. The first page is full and stops
+    // inside it, so the follower must ask again rather than call it the tip.
+    let rpc = ScriptedRpc::new(vec![
+        page(in_ledger[..2].to_vec(), in_ledger[1].position, ledger),
+        page(in_ledger[2..3].to_vec(), end_of_ledger(ledger), ledger),
+    ]);
+    let report = sync_with(&db, &rpc, 2).await.expect("sync");
+    assert_eq!(report.pages, 2);
+    assert_eq!(report.inserted, 3);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn events_out_of_order_stop_ingestion_with_nothing_stored() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let mut events: Vec<_> = history().into_iter().take(5).collect();
+    events.swap(1, 2);
+    let rpc = ScriptedRpc::new(vec![page(events, end_of_ledger(5_000_000), 5_000_000)]);
+    let error = sync_with(&db, &rpc, 10).await.expect_err("refused");
+    assert!(matches!(error, IngestError::OutOfOrder { .. }), "{error}");
+    assert_eq!(db.count("contract_events").await, 0);
+    assert_eq!(db.store.checkpoint(RPC_STREAM).await.expect("read"), None);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_repeated_event_on_the_next_page_stops_ingestion() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let events: Vec<_> = history().into_iter().take(4).collect();
+    // The second page starts again at the last event of the first.
+    let rpc = ScriptedRpc::new(vec![
+        page(events[..2].to_vec(), events[1].position, 5_000_000),
+        page(events[1..].to_vec(), end_of_ledger(5_000_000), 5_000_000),
+    ]);
+    let error = sync_with(&db, &rpc, 2).await.expect_err("refused");
+    assert!(matches!(error, IngestError::OutOfOrder { .. }), "{error}");
+    // The first page committed, the second did not.
+    assert_eq!(db.count("contract_events").await, 2);
+    assert_eq!(
+        db.store
+            .checkpoint(RPC_STREAM)
+            .await
+            .expect("read")
+            .map(|c| c.cursor),
+        Some(events[1].position)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_cursor_behind_the_page_it_ends_stops_ingestion() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let events: Vec<_> = history().into_iter().take(3).collect();
+    let rpc = ScriptedRpc::new(vec![page(events.clone(), events[0].position, 5_000_000)]);
+    let error = sync_with(&db, &rpc, 10).await.expect_err("refused");
+    assert!(
+        matches!(error, IngestError::CursorRegression { .. }),
+        "{error}"
+    );
+    assert_eq!(db.count("contract_events").await, 0);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_unknown_event_from_the_pool_stops_ingestion() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let mut events: Vec<_> = history().into_iter().take(3).collect();
+    // Rename the second event, as a contract upgrade adding an event would.
+    events[1].raw.topics[0] = ScVal::Symbol("brand_new_event".try_into().expect("symbol"));
+    let rpc = ScriptedRpc::new(vec![page(events, end_of_ledger(5_000_000), 5_000_000)]);
+    let error = sync_with(&db, &rpc, 10).await.expect_err("refused");
+    assert!(matches!(error, IngestError::Decode { .. }), "{error}");
+    assert_eq!(db.count("contract_events").await, 0);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_settlement_naming_another_pool_stops_ingestion() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    // The pool's history replayed as if a second pool were the one followed:
+    // the contract matches, the pool named inside the settlement does not.
+    let other_pool = "CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB";
+    let events: Vec<ContractEvent> = history()
+        .into_iter()
+        .filter(|event| event.contract == POOL)
+        .map(|event| ContractEvent {
+            contract: other_pool.to_owned(),
+            ..event
+        })
+        .collect();
+    let contracts = veil_indexer::ingest::Contracts {
+        pool: other_pool.to_owned(),
+        allowlist: ALLOWLIST.to_owned(),
+    };
+    let rpc = FakeRpc::new(events);
+    let error = Follower {
+        source: &rpc,
+        store: &db.store,
+        contracts: &contracts,
+        stream: RPC_STREAM,
+        page_size: 200,
+    }
+    .sync_to_tip(Some(1))
+    .await
+    .expect_err("refused");
+    assert!(
+        matches!(error, IngestError::WrongContract { .. }),
+        "{error}"
+    );
+    assert_eq!(db.count("pool_settlements").await, 0);
     db.drop().await;
 }
