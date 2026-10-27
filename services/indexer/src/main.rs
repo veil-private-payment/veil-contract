@@ -2,13 +2,17 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
-use veil_indexer::config::{ChainConfig, LogConfig};
+use veil_indexer::config::{ChainConfig, DatabaseConfig, IngestConfig, LogConfig};
 use veil_indexer::event::Decoded;
+use veil_indexer::ingest::{Contracts, Follower, RPC_STREAM};
+use veil_indexer::rpc::{Retry, RpcClient};
 use veil_indexer::source::{ExpertEventRecord, Source};
+use veil_indexer::store::{Store, StoreOptions};
 use veil_indexer::{logging, position::EventPosition};
 
 #[derive(Debug, Parser)]
@@ -34,6 +38,21 @@ enum Command {
         #[command(flatten)]
         chain: ChainConfig,
     },
+    /// Apply database migrations and exit.
+    Migrate {
+        #[command(flatten)]
+        database: DatabaseConfig,
+    },
+    /// Read events from RPC until the tip, store them, and exit. Resumes from
+    /// the stored checkpoint.
+    Sync {
+        #[command(flatten)]
+        chain: ChainConfig,
+        #[command(flatten)]
+        database: DatabaseConfig,
+        #[command(flatten)]
+        ingest: IngestConfig,
+    },
 }
 
 #[derive(Serialize)]
@@ -57,10 +76,11 @@ enum DecodedBody<'a> {
     },
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
     logging::init(cli.log.log_format);
-    match run(cli.command) {
+    match run(cli.command).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             tracing::error!(error = format!("{err:#}"), "command failed");
@@ -69,14 +89,68 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(command: Command) -> Result<()> {
+async fn run(command: Command) -> Result<()> {
     match command {
         Command::Decode { file } => decode(&file),
         Command::Config { chain } => {
             tracing::info!(?chain, "configuration is valid");
             Ok(())
         }
+        Command::Migrate { database } => {
+            let store = connect(&database).await?;
+            store.migrate().await.context("applying migrations")?;
+            tracing::info!("migrations applied");
+            Ok(())
+        }
+        Command::Sync {
+            chain,
+            database,
+            ingest,
+        } => sync(chain, database, ingest).await,
     }
+}
+
+async fn connect(database: &DatabaseConfig) -> Result<Store> {
+    let options = StoreOptions {
+        max_connections: database.db_max_connections,
+        ..StoreOptions::default()
+    };
+    Store::connect(&database.database_url, &options)
+        .await
+        .context("connecting to the database")
+}
+
+async fn sync(chain: ChainConfig, database: DatabaseConfig, ingest: IngestConfig) -> Result<()> {
+    let store = connect(&database).await?;
+    store.migrate().await.context("applying migrations")?;
+    let rpc = RpcClient::new(
+        &chain.rpc_url,
+        Duration::from_secs(ingest.rpc_timeout_secs),
+        Retry::default(),
+    )
+    .context("building the RPC client")?;
+    let contracts = Contracts {
+        pool: chain.pool_contract,
+        allowlist: chain.allowlist_contract,
+    };
+    let follower = Follower {
+        source: &rpc,
+        store: &store,
+        contracts: &contracts,
+        stream: RPC_STREAM,
+        page_size: ingest.page_size,
+    };
+    let report = follower.sync_to_tip(ingest.start_ledger).await?;
+    tracing::info!(
+        pages = report.pages,
+        inserted = report.inserted,
+        already_stored = report.already_stored,
+        ignored = report.ignored,
+        cursor = report.checkpoint.map(|c| c.cursor.to_string()),
+        latest_ledger = report.checkpoint.map(|c| c.latest_ledger),
+        "reached the tip"
+    );
+    Ok(())
 }
 
 fn decode(file: &PathBuf) -> Result<()> {

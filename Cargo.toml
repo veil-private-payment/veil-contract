@@ -52,10 +52,13 @@ soroban-sdk = { version = "26", default-features = false, features = ["hazmat"] 
 # Off-chain services. Kept apart from the contract dependencies above so the
 # contract crates never pull in a runtime, a database driver or a CLI parser.
 clap = { version = "4.6", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring-webpki", "migrate", "macros"] }
 stellar-strkey = "0.0.16"
 stellar-xdr = { version = "=26.0.1", default-features = false, features = ["std", "curr", "base64"] }
 thiserror = "2"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 

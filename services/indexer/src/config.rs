@@ -37,6 +37,41 @@ pub struct ChainConfig {
     pub allowlist_contract: String,
 }
 
+/// The database the indexer writes to.
+#[derive(Clone, Debug, Args)]
+pub struct DatabaseConfig {
+    /// Postgres URL. Read from the environment in deployments so the password
+    /// stays out of the process list.
+    #[arg(long, env = "DATABASE_URL", hide_env_values = true, value_parser = parse_secret)]
+    pub database_url: Secret,
+
+    /// Largest number of open database connections.
+    #[arg(long, env = "VEIL_DB_MAX_CONNECTIONS", default_value_t = 5)]
+    pub db_max_connections: u32,
+}
+
+/// How events are read from Soroban RPC.
+#[derive(Clone, Debug, Args)]
+pub struct IngestConfig {
+    /// Ledger to start from when the database has no checkpoint yet. Must be
+    /// within RPC retention. Ignored once a checkpoint exists.
+    #[arg(long, env = "VEIL_START_LEDGER")]
+    pub start_ledger: Option<u32>,
+
+    /// Events requested per `getEvents` call.
+    #[arg(
+        long,
+        env = "VEIL_PAGE_SIZE",
+        default_value_t = 200,
+        value_parser = clap::value_parser!(u32).range(1..=10_000)
+    )]
+    pub page_size: u32,
+
+    /// Seconds before an RPC request is abandoned and retried.
+    #[arg(long, env = "VEIL_RPC_TIMEOUT_SECS", default_value_t = 30)]
+    pub rpc_timeout_secs: u64,
+}
+
 /// How log lines are written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum LogFormat {
@@ -72,6 +107,13 @@ impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret(***)")
     }
+}
+
+fn parse_secret(value: &str) -> Result<Secret, String> {
+    if value.is_empty() {
+        return Err("must not be empty".to_owned());
+    }
+    Ok(Secret::new(value.to_owned()))
 }
 
 /// Accepts a contract strkey (`C…`) and nothing else.
