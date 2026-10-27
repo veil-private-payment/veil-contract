@@ -13,8 +13,8 @@ keeps every event with the same XDR, and RPC is used from there on.
 | Part | State |
 |---|---|
 | Event decoding (all pool and allowlist events) | Done |
-| Database schema and migrations | Not started |
-| RPC ingestion and resume | Not started |
+| Database schema and migrations | Done, see [docs/SCHEMA.md](docs/SCHEMA.md) |
+| RPC ingestion and resume | Done (`sync` reads to the tip and exits) |
 | One-time seed from Stellar Expert and root check | Not started |
 | Read API | Not started (separate crate) |
 
@@ -45,12 +45,27 @@ of producing a quietly wrong index.
 ## Tests
 
 ```sh
-cargo test -p veil-indexer
+docker compose -f services/indexer/docker-compose.yml up -d
+VEIL_TEST_DATABASE_URL=postgres://veil:veil@localhost:5433/veil cargo test -p veil-indexer
 ```
+
+Without `VEIL_TEST_DATABASE_URL` the database tests are skipped locally. CI
+sets it and fails if it is missing.
 
 - `tests/contract_parity.rs` publishes each event through the contract's own
   struct and decodes what the host records. It covers the events the testnet
   deployment has never emitted (`Exit`, `public_key_event`).
+- `tests/store_and_ingest.rs` runs on a real Postgres, one fresh database per
+  test. It replays the full testnet history through a source that pages it the
+  way RPC does, and checks: migrations on an empty database with instances
+  racing, one row per event however often it is written, resume after a
+  failure mid-sync with a result identical to an uninterrupted run, the same
+  result for any page size, and that conflicting content, a reused tree index,
+  a checkpoint moving back or an event from the wrong contract all stop
+  ingestion with nothing from the failed batch kept.
+- `tests/rpc.rs` exercises the `getEvents` client over HTTP against a mock
+  server, using a real recorded testnet response: paging, cursor resume,
+  retry on 5xx and 429, no retry on RPC errors.
 - `tests/stellar_expert_fixtures.rs` decodes the full testnet history of the
   deployment in `deployments/testnet.json` as Stellar Expert returned it, and
   checks ledger order, unique tree indices, one spend per nullifier, and that
@@ -72,10 +87,19 @@ cargo run -p veil-indexer -- config
 Logs are JSON on stderr by default (`--log-format pretty` for local work), and
 the level comes from `RUST_LOG`.
 
-A local Postgres for development:
+Store events in a local Postgres:
 
 ```sh
 docker compose -f services/indexer/docker-compose.yml up -d
+export DATABASE_URL=postgres://veil:veil@localhost:5433/veil
+export VEIL_POOL_CONTRACT=CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G
+export VEIL_ALLOWLIST_CONTRACT=CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB
+
+cargo run -p veil-indexer -- migrate
+# First run: start inside RPC retention (about seven days back).
+cargo run -p veil-indexer -- sync --start-ledger <ledger>
+# Later runs resume from the stored checkpoint.
+cargo run -p veil-indexer -- sync
 ```
 
 ## Configuration
@@ -86,7 +110,12 @@ docker compose -f services/indexer/docker-compose.yml up -d
 | `VEIL_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
 | `VEIL_POOL_CONTRACT` | required | Pool contract ID (`C…`) |
 | `VEIL_ALLOWLIST_CONTRACT` | required | Allowlist contract ID (`C…`) |
+| `DATABASE_URL` | required for `migrate`, `sync` | Postgres URL. Never logged |
+| `VEIL_DB_MAX_CONNECTIONS` | `5` | Connection pool size |
+| `VEIL_START_LEDGER` | none | First ledger when there is no checkpoint yet |
+| `VEIL_PAGE_SIZE` | `200` | Events per `getEvents` call, 1 to 10,000 |
+| `VEIL_RPC_TIMEOUT_SECS` | `30` | Per-request timeout. Failed requests retry with backoff |
 | `VEIL_LOG_FORMAT` | `json` | `json` or `pretty` |
-| `RUST_LOG` | `info` | Log level filter |
+| `RUST_LOG` | `info,sqlx=warn` | Log level filter |
 
 Contract IDs are validated at start-up.

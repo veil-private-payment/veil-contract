@@ -7,6 +7,9 @@
 
 pub mod config;
 pub mod event;
+pub mod ingest;
 pub mod logging;
 pub mod position;
+pub mod rpc;
 pub mod source;
+pub mod store;

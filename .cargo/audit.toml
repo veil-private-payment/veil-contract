@@ -16,4 +16,9 @@ ignore = [
     # contracts only link for tests. Deployed wasm does not contain it, and the
     # fix (0.7) needs a soroban-env-host release that adopts it.
     "RUSTSEC-2026-0387",
+    # rsa 0.9.10 (Marvin timing attack, no fix released): listed in Cargo.lock
+    # only because sqlx names sqlx-mysql as an optional dependency. The indexer
+    # enables the postgres driver alone, and `cargo tree --target all -i rsa`
+    # prints nothing: no target compiles it.
+    "RUSTSEC-2023-0071",
 ]
