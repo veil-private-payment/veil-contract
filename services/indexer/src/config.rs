@@ -108,6 +108,15 @@ pub struct ServiceArgs {
     /// `/ready` fails when no sync has succeeded for this many seconds.
     #[arg(long, env = "VEIL_READY_MAX_SILENCE_SECS", default_value_t = 120)]
     pub ready_max_silence_secs: u64,
+
+    /// Seed from Stellar Expert on start when the database is empty.
+    #[arg(
+        long,
+        env = "VEIL_SEED_IF_EMPTY",
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
+    pub seed_if_empty: bool,
 }
 
 /// How log lines are written.

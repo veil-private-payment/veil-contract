@@ -27,6 +27,7 @@ fn config() -> ServiceConfig {
         overlap: 100,
         max_lag: 10,
         max_silence: Duration::from_secs(60),
+        seed_from: None,
     }
 }
 
@@ -337,5 +338,75 @@ async fn a_waiting_instance_stops_when_asked() {
         .expect("joins")
         .expect("no error");
     assert!(lock.is_none());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_empty_database_is_seeded_before_following() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let server = quiet_rpc().await;
+    // A Stellar Expert that has processed up to TIP - 20 and lists no events.
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/explorer/testnet/ledger/last"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sequence": TIP - 20 })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"/events$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "_embedded": { "records": [] } })),
+        )
+        .mount(&server)
+        .await;
+    let expert = veil_indexer::expert::ExpertClient::new(
+        &format!("{}/explorer/testnet", server.uri()),
+        Duration::from_secs(5),
+        Retry {
+            attempts: 1,
+            first_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(1),
+        },
+    )
+    .expect("client");
+    let config = Arc::new(ServiceConfig {
+        seed_from: Some(expert),
+        ..config()
+    });
+
+    let rpc = rpc(&server);
+    let status = Arc::new(RwLock::new(Status::default()));
+    let (stop, stopped) = watch::channel(false);
+    let lock = db.store.writer_lock().await.expect("lock");
+    let store = db.store.clone();
+    let task_status = status.clone();
+    let task = tokio::spawn(async move {
+        run(
+            &rpc,
+            &store,
+            lock,
+            &contracts(),
+            config,
+            task_status,
+            stopped,
+        )
+        .await
+    });
+    wait_for(&status, |s| s.indexed_ledger == Some(TIP)).await;
+    let seeded = db
+        .store
+        .checkpoint(SEED_STREAM)
+        .await
+        .expect("read")
+        .expect("seeded");
+    assert_eq!(seeded.latest_ledger, TIP - 20);
+
+    stop.send(true).expect("signal");
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("stops")
+        .expect("joins")
+        .expect("clean exit");
     db.drop().await;
 }

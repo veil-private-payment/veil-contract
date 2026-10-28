@@ -42,12 +42,14 @@ working default for testnet; see the README for the full list.
 
 ## First start
 
-1. Run the image once with the command `seed`. It reads both contracts' full
-   history from Stellar Expert and records the ledger it is complete to. It is
-   resumable if interrupted.
-2. Start the service with the default command `run`. With no RPC checkpoint
-   yet, it starts RPC about a day before the seed's end, re-reads that overlap
-   and checks each event against the seeded copy.
+1. Start the service with the default command `run`. On an empty database it
+   first seeds: it reads both contracts' full history from Stellar Expert and
+   records the ledger that history is complete to (resumable if interrupted;
+   `VEIL_SEED_IF_EMPTY=false` turns this off, and `seed` does the same as a
+   one-off command).
+2. It then starts RPC about a day before the seed's end, re-reads that
+   overlap and checks each event against the seeded copy, and follows RPC
+   from there.
 3. Point the platform's deploy health check at `GET /health` (port 8080),
    and monitoring at `GET /ready`, which returns 200 once the index is within
    10 ledgers of the RPC tip.

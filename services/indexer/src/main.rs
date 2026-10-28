@@ -74,9 +74,12 @@ enum Command {
         ingest: IngestConfig,
     },
     /// Follow RPC continuously and serve /health, /ready and /metrics.
+    /// Seeds first if the database is empty.
     Run {
         #[command(flatten)]
         chain: ChainConfig,
+        #[command(flatten)]
+        expert: ExpertConfig,
         #[command(flatten)]
         database: DatabaseConfig,
         #[command(flatten)]
@@ -161,10 +164,11 @@ async fn run(command: Command) -> Result<()> {
         } => verify(chain, database, ingest).await,
         Command::Run {
             chain,
+            expert,
             database,
             ingest,
             service,
-        } => serve(chain, database, ingest, service).await,
+        } => serve(chain, expert, database, ingest, service).await,
     }
 }
 
@@ -264,6 +268,7 @@ async fn verify(chain: ChainConfig, database: DatabaseConfig, ingest: IngestConf
 
 async fn serve(
     chain: ChainConfig,
+    expert: ExpertConfig,
     database: DatabaseConfig,
     ingest: IngestConfig,
     args: ServiceArgs,
@@ -278,6 +283,18 @@ async fn serve(
         overlap: ingest.overlap_ledgers,
         max_lag: args.ready_max_lag,
         max_silence: Duration::from_secs(args.ready_max_silence_secs),
+        seed_from: if args.seed_if_empty {
+            Some(
+                ExpertClient::new(
+                    &expert.expert_url,
+                    Duration::from_secs(ingest.rpc_timeout_secs),
+                    Retry::default(),
+                )
+                .context("building the Stellar Expert client")?,
+            )
+        } else {
+            None
+        },
     });
     let status = Arc::new(RwLock::new(Status::default()));
     let (stop_tx, stop_rx) = watch::channel(false);

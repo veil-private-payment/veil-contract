@@ -117,9 +117,8 @@ export DATABASE_URL=postgres://veil:veil@localhost:5433/veil
 export VEIL_POOL_CONTRACT=CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G
 export VEIL_ALLOWLIST_CONTRACT=CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB
 
-# Once: read the full history from Stellar Expert (resumable).
-cargo run -p veil-indexer -- seed
-# Follow RPC, serving /health, /ready and /metrics on VEIL_LISTEN.
+# Follow RPC, serving /health, /ready and /metrics on VEIL_LISTEN. On an
+# empty database this first reads the full history from Stellar Expert.
 cargo run -p veil-indexer -- run
 # Any time: compare the index with the contracts' on-chain roots.
 cargo run -p veil-indexer -- verify
@@ -149,6 +148,7 @@ running one.
 | `VEIL_POLL_SECS` | `5` | Seconds between syncs at the tip |
 | `VEIL_READY_MAX_LAG` | `10` | `/ready` fails beyond this many ledgers behind |
 | `VEIL_READY_MAX_SILENCE_SECS` | `120` | `/ready` fails when no sync succeeded for this long |
+| `VEIL_SEED_IF_EMPTY` | `true` | `run` seeds from Stellar Expert first when the database has neither a seed nor an RPC checkpoint |
 | `VEIL_PAGE_SIZE` | `200` | Events per `getEvents` call, 1 to 10,000 |
 | `VEIL_RPC_TIMEOUT_SECS` | `30` | Per-request timeout. Failed requests retry with backoff |
 | `VEIL_LOG_FORMAT` | `json` | `json` or `pretty` |

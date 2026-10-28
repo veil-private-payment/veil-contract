@@ -24,9 +24,10 @@ use axum::routing::get;
 use serde::Serialize;
 use tokio::sync::{RwLock, watch};
 
+use crate::expert::ExpertClient;
 use crate::ingest::{Contracts, Follower, RPC_STREAM};
 use crate::rpc::RpcClient;
-use crate::seed::rpc_start;
+use crate::seed::{HandoffError, rpc_start, seed};
 use crate::store::{Store, StoreError, WriterLock};
 
 #[derive(Clone, Debug)]
@@ -39,6 +40,10 @@ pub struct ServiceConfig {
     pub max_lag: u32,
     /// Readiness fails when the last successful sync is older than this.
     pub max_silence: Duration,
+    /// Seed from Stellar Expert when the database holds neither a seed nor
+    /// an RPC checkpoint, so a fresh deployment needs no one-off job. A gap
+    /// after that is never filled automatically.
+    pub seed_from: Option<ExpertClient>,
 }
 
 /// What `/ready` and `/metrics` report.
@@ -254,7 +259,20 @@ pub async fn run(
 
         let cycle = async {
             let range = rpc.ledger_range().await?;
-            let start = rpc_start(store, range, config.overlap).await?;
+            let start = match rpc_start(store, range, config.overlap).await {
+                Err(HandoffError::NotSeeded) if config.seed_from.is_some() => {
+                    let expert = config.seed_from.as_ref().ok_or(HandoffError::NotSeeded)?;
+                    tracing::info!("empty database, seeding from Stellar Expert");
+                    let report = seed(expert, store, contracts, 200).await?;
+                    tracing::info!(
+                        inserted = report.inserted,
+                        complete_to = report.complete_to,
+                        "seed complete"
+                    );
+                    rpc_start(store, range, config.overlap).await?
+                }
+                other => other?,
+            };
             let follower = Follower {
                 source: rpc,
                 store,
@@ -326,6 +344,7 @@ mod tests {
             overlap: 100,
             max_lag: 10,
             max_silence: Duration::from_secs(60),
+            seed_from: None,
         }
     }
 
