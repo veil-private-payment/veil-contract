@@ -27,7 +27,7 @@ impl Contracts {
 
     /// Checks that an event came from the contract that emits its kind, and
     /// that a pool event naming its pool names the one being followed.
-    fn check(&self, event: &ContractEvent, decoded: &Decoded) -> Result<(), IngestError> {
+    pub fn check(&self, event: &ContractEvent, decoded: &Decoded) -> Result<(), IngestError> {
         let Decoded::Event(veil) = decoded else {
             return Ok(());
         };

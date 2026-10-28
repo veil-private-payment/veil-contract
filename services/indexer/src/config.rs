@@ -53,8 +53,9 @@ pub struct DatabaseConfig {
 /// How events are read from Soroban RPC.
 #[derive(Clone, Debug, Args)]
 pub struct IngestConfig {
-    /// Ledger to start from when the database has no checkpoint yet. Must be
-    /// within RPC retention. Ignored once a checkpoint exists.
+    /// Ledger to start from when the database has no RPC checkpoint. Without
+    /// it, RPC starts from the completed seed (see `seed`). Ignored once a
+    /// checkpoint exists.
     #[arg(long, env = "VEIL_START_LEDGER")]
     pub start_ledger: Option<u32>,
 
@@ -67,9 +68,46 @@ pub struct IngestConfig {
     )]
     pub page_size: u32,
 
+    /// Ledgers before the seed's last ledger that RPC re-reads, so the two
+    /// sources overlap and are cross-checked.
+    #[arg(long, env = "VEIL_OVERLAP_LEDGERS", default_value_t = crate::seed::DEFAULT_OVERLAP)]
+    pub overlap_ledgers: u32,
+
     /// Seconds before an RPC request is abandoned and retried.
     #[arg(long, env = "VEIL_RPC_TIMEOUT_SECS", default_value_t = 30)]
     pub rpc_timeout_secs: u64,
+}
+
+/// Where history older than RPC retention is read from.
+#[derive(Clone, Debug, Args)]
+pub struct ExpertConfig {
+    /// Stellar Expert API base for the network.
+    #[arg(
+        long,
+        env = "VEIL_EXPERT_URL",
+        default_value = "https://api.stellar.expert/explorer/testnet"
+    )]
+    pub expert_url: String,
+}
+
+/// The long-running service.
+#[derive(Clone, Debug, Args)]
+pub struct ServiceArgs {
+    /// Address the health and metrics server listens on.
+    #[arg(long, env = "VEIL_LISTEN", default_value = "0.0.0.0:8080")]
+    pub listen: std::net::SocketAddr,
+
+    /// Seconds between syncs once at the tip.
+    #[arg(long, env = "VEIL_POLL_SECS", default_value_t = 5)]
+    pub poll_secs: u64,
+
+    /// `/ready` fails when the index is more than this many ledgers behind.
+    #[arg(long, env = "VEIL_READY_MAX_LAG", default_value_t = 10)]
+    pub ready_max_lag: u32,
+
+    /// `/ready` fails when no sync has succeeded for this many seconds.
+    #[arg(long, env = "VEIL_READY_MAX_SILENCE_SECS", default_value_t = 120)]
+    pub ready_max_silence_secs: u64,
 }
 
 /// How log lines are written.

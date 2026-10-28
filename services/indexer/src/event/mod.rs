@@ -236,7 +236,7 @@ impl DecodeError {
 /// The largest legitimate value is an encrypted note of a few hundred bytes,
 /// so these leave a wide margin while still bounding what a bad response can
 /// make the reader allocate.
-fn xdr_limits() -> Limits {
+pub fn xdr_limits() -> Limits {
     Limits {
         depth: 32,
         len: 65_536,

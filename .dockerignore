@@ -1,0 +1,17 @@
+# Build context for services/indexer/Dockerfile. The image builds one crate,
+# but Cargo needs every workspace member's manifest and sources to resolve.
+.git
+.github
+**/target
+**/node_modules
+**/test_snapshots
+**/.DS_Store
+.env
+.env.local
+deployments/*.deploy.env
+scripts/ts/account
+circuits/src/circomlib
+circuits/**/*_js
+circuits/**/*.r1cs
+circuits/**/*.sym
+circuits/**/*.wasm

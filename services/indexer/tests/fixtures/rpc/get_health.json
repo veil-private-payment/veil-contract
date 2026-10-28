@@ -1,0 +1,12 @@
+{
+ "jsonrpc": "2.0",
+ "id": 1,
+ "result": {
+  "status": "healthy",
+  "latestLedger": 5428145,
+  "latestLedgerCloseTime": "1793164365",
+  "oldestLedger": 5307186,
+  "oldestLedgerCloseTime": "1792559517",
+  "ledgerRetentionWindow": 120960
+ }
+}
