@@ -13,10 +13,9 @@ COPY . .
 # rust-toolchain.toml pins 1.92.0, which this image already has. Its wasm
 # targets are only needed for the contracts, so skip installing them here.
 ENV RUSTUP_TOOLCHAIN=1.92.0
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p veil-indexer \
+# No BuildKit cache mounts: some hosts (Railway) require host-specific mount
+# ids. CI caches image layers instead.
+RUN cargo build --release --locked -p veil-indexer \
  && cp target/release/veil-indexer /veil-indexer
 
 FROM gcr.io/distroless/cc-debian12:nonroot

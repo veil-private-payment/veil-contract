@@ -12,7 +12,7 @@ use tokio::sync::{RwLock, watch};
 use veil_indexer::ingest::RPC_STREAM;
 use veil_indexer::rpc::{Retry, RpcClient};
 use veil_indexer::seed::{SEED_STREAM, end_of_ledger};
-use veil_indexer::service::{ServiceConfig, Status, router, run};
+use veil_indexer::service::{ServiceConfig, Status, acquire_writer_lock, router, run};
 use veil_indexer::store::{Checkpoint, StoreError};
 use wiremock::matchers::{body_partial_json, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -287,5 +287,55 @@ async fn failures_are_reported_and_retried_without_ending_the_loop() {
         .expect("stops promptly")
         .expect("joins")
         .expect("clean exit");
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_new_instance_waits_for_the_old_one_to_release_the_lock() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let old = db.store.writer_lock().await.expect("old instance holds it");
+
+    let new_store = db.second_store().await;
+    let (_stop, mut stopped) = watch::channel(false);
+    let waiter = tokio::spawn(async move {
+        acquire_writer_lock(&new_store, Duration::from_millis(20), &mut stopped).await
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !waiter.is_finished(),
+        "took the lock while the old instance held it"
+    );
+
+    drop(old);
+    let lock = tokio::time::timeout(Duration::from_secs(5), waiter)
+        .await
+        .expect("takes over")
+        .expect("joins")
+        .expect("no error");
+    assert!(lock.is_some());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_waiting_instance_stops_when_asked() {
+    let Some(db) = TestDb::migrated().await else {
+        return;
+    };
+    let _held = db.store.writer_lock().await.expect("held");
+    let other = db.second_store().await;
+    let (stop, mut stopped) = watch::channel(false);
+    let waiter = tokio::spawn(async move {
+        acquire_writer_lock(&other, Duration::from_secs(60), &mut stopped).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    stop.send(true).expect("signal");
+    let lock = tokio::time::timeout(Duration::from_secs(5), waiter)
+        .await
+        .expect("stops promptly")
+        .expect("joins")
+        .expect("no error");
+    assert!(lock.is_none());
     db.drop().await;
 }

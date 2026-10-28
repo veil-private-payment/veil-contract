@@ -48,21 +48,24 @@ working default for testnet; see the README for the full list.
 2. Start the service with the default command `run`. With no RPC checkpoint
    yet, it starts RPC about a day before the seed's end, re-reads that overlap
    and checks each event against the seeded copy.
-3. Point the platform's health check at `GET /ready` (port 8080). It returns
-   200 once the index is within 10 ledgers of the RPC tip.
+3. Point the platform's deploy health check at `GET /health` (port 8080),
+   and monitoring at `GET /ready`, which returns 200 once the index is within
+   10 ledgers of the RPC tip.
 4. Run `verify` (same image, same environment). It exits 0 when the pool's
    recomputed root and size, and the allowlist's roots, match the chain.
 
-Run one `run` instance. A second refuses to start while the first holds the
-writer lock, so a rolling deploy that overlaps two instances briefly is safe:
-the new one exits and the platform restarts it until the old one is gone.
+Run one `run` instance. A second one serves `/health` but waits for the
+writer lock before writing anything, so a rolling deploy that overlaps two
+instances is safe: the new one comes up, passes the health check, and takes
+over as soon as the old one stops. Only `seed` and `sync` refuse outright
+when the lock is held.
 
 ## Operating
 
 | Signal | Meaning | Action |
 |---|---|---|
 | `/ready` 503, "behind the RPC tip" | Catching up, or RPC is slow | Normal after a restart. Investigate if it persists |
-| `/ready` 503, `last_error` mentions "gap" | The index stopped longer than RPC retention (about seven days) | Run `seed` again, then restart `run` |
+| `/ready` 503, `last_error` mentions "gap" | The index stopped longer than RPC retention (about seven days) | Stop `run`, run `seed` again, start `run` |
 | `/ready` 503, `last_error` mentions a conflict or decode error | Two sources disagree, or a contract emitted an event the decoder does not know | Stop and investigate. Never skip it: the index would be wrong |
 | Process exits with "writer lock was lost" | The database connection holding the lock dropped | The platform restarts it. Nothing to do |
 | `verify` exits non-zero | The index does not match the chain | Investigate before serving reads from it |
@@ -74,3 +77,10 @@ the new one exits and the platform restarts it until the old one is gone.
 On SIGTERM the service stops at once. A page being written then is either
 committed with its checkpoint or rolled back, so a stop at any moment loses
 nothing and duplicates nothing.
+
+## Railway
+
+`railway.json` at the repository root builds this Dockerfile and checks
+`/health` on deploy. The testnet deployment is one project holding a Postgres
+service and an `indexer` service whose `DATABASE_URL` references the
+Postgres service's variable, so the password is never copied by hand.

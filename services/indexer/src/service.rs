@@ -27,7 +27,7 @@ use tokio::sync::{RwLock, watch};
 use crate::ingest::{Contracts, Follower, RPC_STREAM};
 use crate::rpc::RpcClient;
 use crate::seed::rpc_start;
-use crate::store::{Store, WriterLock};
+use crate::store::{Store, StoreError, WriterLock};
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
@@ -193,6 +193,44 @@ pub async fn shutdown_signal() {
     tokio::select! {
         () = interrupt => {}
         () = terminate => {}
+    }
+}
+
+/// Waits for the writer lock, retrying every `every`, until it is free or
+/// `stop` turns true (`None`).
+///
+/// A new deployment starts while the previous one still runs and holds the
+/// lock. Waiting rather than exiting lets the new one come up, pass the
+/// platform's `/health` check, and take over once the old one stops.
+pub async fn acquire_writer_lock(
+    store: &Store,
+    every: Duration,
+    stop: &mut watch::Receiver<bool>,
+) -> Result<Option<WriterLock>, StoreError> {
+    let mut logged = false;
+    loop {
+        if *stop.borrow() {
+            return Ok(None);
+        }
+        match store.writer_lock().await {
+            Ok(lock) => {
+                if logged {
+                    tracing::info!("writer lock acquired");
+                }
+                return Ok(Some(lock));
+            }
+            Err(StoreError::Locked) => {
+                if !logged {
+                    tracing::info!("another indexer holds the writer lock, waiting for it");
+                    logged = true;
+                }
+            }
+            Err(err) => return Err(err),
+        }
+        tokio::select! {
+            _ = stop.changed() => return Ok(None),
+            () = tokio::time::sleep(every) => {}
+        }
     }
 }
 

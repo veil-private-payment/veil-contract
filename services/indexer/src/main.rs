@@ -270,7 +270,6 @@ async fn serve(
 ) -> Result<()> {
     let store = connect(&database).await?;
     store.migrate().await.context("applying migrations")?;
-    let lock = store.writer_lock().await?;
     let rpc = rpc_client(&chain, &ingest)?;
     let config = Arc::new(ServiceConfig {
         listen: args.listen,
@@ -304,6 +303,15 @@ async fn serve(
         let _ = stop_tx.send(true);
     });
 
+    // Serve /health first, then wait for any previous instance to let go.
+    let mut waiting = stop_rx.clone();
+    let lock =
+        veil_indexer::service::acquire_writer_lock(&store, Duration::from_secs(5), &mut waiting)
+            .await?;
+    let Some(lock) = lock else {
+        server.abort();
+        return Ok(());
+    };
     let contracts = contracts(&chain);
     let outcome =
         veil_indexer::service::run(&rpc, &store, lock, &contracts, config, status, stop_rx).await;

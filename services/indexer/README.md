@@ -126,9 +126,11 @@ cargo run -p veil-indexer -- verify
 ```
 
 `sync` reads to the tip once and exits, for scripts. Only one process may
-write: `seed`, `sync` and `run` take a Postgres advisory lock and refuse to
-start while another holds it. `verify` catches up first when no indexer is
-running, and otherwise waits for the running one.
+write: `seed`, `sync` and `run` take a Postgres advisory lock. `seed` and
+`sync` refuse to start while another process holds it, and `run` serves
+`/health` and waits for it, so a rolling deploy hands over cleanly. `verify`
+catches up first when no indexer is running, and otherwise waits for the
+running one.
 
 ## Configuration
 
