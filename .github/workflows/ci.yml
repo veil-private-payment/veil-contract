@@ -56,6 +56,26 @@ jobs:
       - name: Build contract wasm
         run: cargo build --release --target wasm32v1-none -p pool -p asp-membership -p circom-groth16-verifier --locked
 
+  indexer-image:
+    name: Indexer image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds the runtime image without pushing it, so a Dockerfile or
+      # build break shows up on the pull request rather than at deploy time.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/indexer/Dockerfile
+          push: false
+          tags: veil-indexer:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest

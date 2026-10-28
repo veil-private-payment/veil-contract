@@ -14,8 +14,10 @@ keeps every event with the same XDR, and RPC is used from there on.
 |---|---|
 | Event decoding (all pool and allowlist events) | Done |
 | Database schema and migrations | Done, see [docs/SCHEMA.md](docs/SCHEMA.md) |
-| RPC ingestion and resume | Done (`sync` reads to the tip and exits) |
-| One-time seed from Stellar Expert and root check | Not started |
+| RPC ingestion and resume | Done |
+| One-time seed from Stellar Expert, hand-off to RPC | Done |
+| `verify`: recomputed roots against on-chain state | Done |
+| Long-running service with `/health`, `/ready`, `/metrics` | Done, see [docs/DEPLOY.md](docs/DEPLOY.md) |
 | Read API | Not started (separate crate) |
 
 ## Events
@@ -66,6 +68,26 @@ sets it and fails if it is missing.
 - `tests/rpc.rs` exercises the `getEvents` client over HTTP against a mock
   server, using a real recorded testnet response: paging, cursor resume,
   retry on 5xx and 429, no retry on RPC errors.
+- `tests/tree_parity.rs` compares the off-chain Poseidon2 compression and
+  zero hashes with the contracts' own functions, the pool tree with the
+  contract's `MerkleTreeWithHistory` after every insertion, and replays the
+  live allowlist reproducing each root it emitted on testnet.
+- `tests/chain.rs` reads contract state from recorded `getLedgerEntries`
+  responses and checks the storage keys are encoded as the contract encodes
+  them.
+- `tests/seed_and_handoff.rs` seeds from a mock Stellar Expert that pages the
+  recorded listings: full history, resume after a failure, refusal of
+  foreign or out-of-order listings, the RPC overlap finding the same events
+  (and stopping on a single differing byte), and the hand-off refusing any
+  gap RPC retention would leave.
+- `tests/verify_checks.rs` runs `verify` against the recorded testnet state
+  (pool root `0x2658…80fd` over 34 positions, allowlist root `0x04cd…3738`)
+  and against indexes that are wrong: a missing or altered commitment, a
+  missing final pair, a tampered allowlist root, an operator-maintained
+  allowlist.
+- `tests/service.rs` covers the single-writer lock, the HTTP endpoints, and
+  the follow loop handing off from the seed, reporting failures without
+  exiting, and stopping on request.
 - `tests/stellar_expert_fixtures.rs` decodes the full testnet history of the
   deployment in `deployments/testnet.json` as Stellar Expert returned it, and
   checks ledger order, unique tree indices, one spend per nullifier, and that
@@ -95,12 +117,19 @@ export DATABASE_URL=postgres://veil:veil@localhost:5433/veil
 export VEIL_POOL_CONTRACT=CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G
 export VEIL_ALLOWLIST_CONTRACT=CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB
 
-cargo run -p veil-indexer -- migrate
-# First run: start inside RPC retention (about seven days back).
-cargo run -p veil-indexer -- sync --start-ledger <ledger>
-# Later runs resume from the stored checkpoint.
-cargo run -p veil-indexer -- sync
+# Follow RPC, serving /health, /ready and /metrics on VEIL_LISTEN. On an
+# empty database this first reads the full history from Stellar Expert.
+cargo run -p veil-indexer -- run
+# Any time: compare the index with the contracts' on-chain roots.
+cargo run -p veil-indexer -- verify
 ```
+
+`sync` reads to the tip once and exits, for scripts. Only one process may
+write: `seed`, `sync` and `run` take a Postgres advisory lock. `seed` and
+`sync` refuse to start while another process holds it, and `run` serves
+`/health` and waits for it, so a rolling deploy hands over cleanly. `verify`
+catches up first when no indexer is running, and otherwise waits for the
+running one.
 
 ## Configuration
 
@@ -110,9 +139,17 @@ cargo run -p veil-indexer -- sync
 | `VEIL_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
 | `VEIL_POOL_CONTRACT` | required | Pool contract ID (`C…`) |
 | `VEIL_ALLOWLIST_CONTRACT` | required | Allowlist contract ID (`C…`) |
-| `DATABASE_URL` | required for `migrate`, `sync` | Postgres URL. Never logged |
+| `DATABASE_URL` | required except for `decode`, `config` | Postgres URL. Never logged |
 | `VEIL_DB_MAX_CONNECTIONS` | `5` | Connection pool size |
-| `VEIL_START_LEDGER` | none | First ledger when there is no checkpoint yet |
+| `VEIL_START_LEDGER` | none | Override where RPC starts when there is no RPC checkpoint. Normally left unset: RPC starts from the seed |
+| `VEIL_OVERLAP_LEDGERS` | `17280` (about a day) | Ledgers before the seed's end that RPC re-reads and cross-checks |
+| `VEIL_EXPERT_URL` | `https://api.stellar.expert/explorer/testnet` | Stellar Expert API for `seed` |
+| `VEIL_LISTEN` | `0.0.0.0:8080` | Health and metrics server (`run`) |
+| `VEIL_POLL_SECS` | `5` | Seconds between syncs at the tip |
+| `VEIL_READY_MAX_LAG` | `10` | `/ready` fails beyond this many ledgers behind |
+| `VEIL_READY_MAX_SILENCE_SECS` | `120` | `/ready` fails when no sync succeeded for this long |
+| `VEIL_VERIFY_EVERY_SECS` | `600` | `run` repeats `verify` this often and publishes the result on `/verify` and `veil_indexer_verify_ok`. 0 turns it off |
+| `VEIL_SEED_IF_EMPTY` | `true` | `run` seeds from Stellar Expert first when the database has neither a seed nor an RPC checkpoint |
 | `VEIL_PAGE_SIZE` | `200` | Events per `getEvents` call, 1 to 10,000 |
 | `VEIL_RPC_TIMEOUT_SECS` | `30` | Per-request timeout. Failed requests retry with backoff |
 | `VEIL_LOG_FORMAT` | `json` | `json` or `pretty` |

@@ -5,11 +5,17 @@
 //! that, so an app can learn the pool's commitments, spent nullifiers,
 //! encrypted notes and allowlist without collecting everything itself.
 
+pub mod chain;
 pub mod config;
 pub mod event;
+pub mod expert;
 pub mod ingest;
 pub mod logging;
 pub mod position;
 pub mod rpc;
+pub mod seed;
+pub mod service;
 pub mod source;
 pub mod store;
+pub mod tree;
+pub mod verify;

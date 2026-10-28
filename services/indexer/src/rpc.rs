@@ -125,7 +125,7 @@ impl Default for Retry {
 }
 
 impl Retry {
-    fn delay(&self, attempt: u32) -> Duration {
+    pub(crate) fn delay(&self, attempt: u32) -> Duration {
         let factor = 1u32.checked_shl(attempt).unwrap_or(u32::MAX);
         self.first_delay
             .checked_mul(factor)
@@ -154,7 +154,7 @@ impl RpcClient {
         })
     }
 
-    async fn call<P: Serialize, R: for<'de> Deserialize<'de>>(
+    pub(crate) async fn call<P: Serialize, R: for<'de> Deserialize<'de>>(
         &self,
         method: &'static str,
         params: &P,

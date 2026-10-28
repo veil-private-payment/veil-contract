@@ -71,8 +71,15 @@ neither. On restart, ingestion resumes after the stored cursor.
 
 ## Checkpoints
 
-`ingest_checkpoints.stream` names an ingestion stream. Live ingestion uses
-`rpc`. The cursor is the position RPC returned with the last committed page:
+`ingest_checkpoints.stream` names an ingestion stream:
+
+| Stream | Written by | Cursor means |
+|---|---|---|
+| `stellar_expert:<contract>` | `seed`, per page | Last event of that contract read from Stellar Expert |
+| `stellar_expert` | `seed`, at the end | End of the ledger the seed is complete to (`latest_ledger`) |
+| `rpc` | `sync`, `run` | Where RPC ingestion resumes |
+
+For `rpc`, the cursor is the position RPC returned with the last committed page:
 either the last event of a full page, or the end of the ledger range the server
 scanned (event index `4294967295`). Resuming passes it back as the `getEvents`
 cursor, which is exclusive.

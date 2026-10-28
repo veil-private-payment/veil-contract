@@ -24,6 +24,36 @@ use crate::source::{ContractEvent, Source};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+/// Advisory lock key held by the one process allowed to write ("veil_idx").
+const WRITER_LOCK: i64 = 0x7665_696c_5f69_6478;
+
+/// Proof that this process is the only writer. The lock is tied to a
+/// dedicated connection and released when it closes, including when the
+/// process dies.
+pub struct WriterLock {
+    connection: sqlx::PgConnection,
+}
+
+impl WriterLock {
+    /// Checks the lock's connection is still open. If it dropped, Postgres
+    /// released the lock and another instance may now hold it, so the caller
+    /// must stop writing.
+    pub async fn still_held(&mut self) -> Result<(), StoreError> {
+        let held: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' \
+             AND pid = pg_backend_pid() AND objid = ($1 & 4294967295)::oid AND granted)",
+        )
+        .bind(WRITER_LOCK)
+        .fetch_one(&mut self.connection)
+        .await?;
+        if held {
+            Ok(())
+        } else {
+            Err(StoreError::LockLost)
+        }
+    }
+}
+
 /// Why a database operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -47,6 +77,10 @@ pub enum StoreError {
         stored_source: String,
         incoming_source: Source,
     },
+    #[error("another process holds the writer lock: only one indexer may write")]
+    Locked,
+    #[error("the writer lock was lost with its connection")]
+    LockLost,
     #[error("checkpoint for {stream} would move back from {stored} to {proposed}")]
     CheckpointRegression {
         stream: String,
@@ -128,6 +162,19 @@ impl Store {
     pub async fn migrate(&self) -> Result<(), StoreError> {
         MIGRATOR.run(&self.pool).await?;
         Ok(())
+    }
+
+    /// Takes the writer lock, or fails at once if another process has it.
+    pub async fn writer_lock(&self) -> Result<WriterLock, StoreError> {
+        let mut connection = self.pool.acquire().await?.detach();
+        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(WRITER_LOCK)
+            .fetch_one(&mut connection)
+            .await?;
+        if !acquired {
+            return Err(StoreError::Locked);
+        }
+        Ok(WriterLock { connection })
     }
 
     pub async fn checkpoint(&self, stream: &str) -> Result<Option<Checkpoint>, StoreError> {
