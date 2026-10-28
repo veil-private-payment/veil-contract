@@ -349,3 +349,61 @@ async fn verify_refuses_to_compare_an_index_behind_the_state() {
     );
     db.drop().await;
 }
+
+#[tokio::test]
+async fn the_periodic_verify_publishes_its_outcome() {
+    use std::sync::Arc;
+    use tokio::sync::{RwLock, watch};
+    use veil_indexer::service::{Status, verify_periodically};
+
+    let Some(db) = indexed().await else { return };
+    db.store
+        .write_batch(
+            RPC_STREAM,
+            &[],
+            Checkpoint {
+                cursor: end_of_ledger(STATE_LEDGER),
+                latest_ledger: STATE_LEDGER,
+            },
+        )
+        .await
+        .expect("advance");
+    let server = chain_server().await;
+    let rpc = rpc(&server);
+    let status = Arc::new(RwLock::new(Status::default()));
+    let (stop, stopped) = watch::channel(false);
+    let (store, task_status) = (db.store.clone(), status.clone());
+    let task = tokio::spawn(async move {
+        verify_periodically(
+            &rpc,
+            &store,
+            &contracts(),
+            std::time::Duration::from_millis(10),
+            task_status,
+            stopped,
+        )
+        .await;
+    });
+
+    let started = std::time::Instant::now();
+    while status.read().await.verification.is_none() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "no verification"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let verification = status.read().await.verification.clone().expect("set");
+    assert!(verification.ok, "{verification:?}");
+    assert_eq!(
+        verification.report.map(|report| report.checks.len()),
+        Some(8)
+    );
+
+    stop.send(true).expect("signal");
+    tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("stops")
+        .expect("joins");
+    db.drop().await;
+}

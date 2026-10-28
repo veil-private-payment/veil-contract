@@ -72,7 +72,9 @@ when the lock is held.
 | Process exits with "writer lock was lost" | The database connection holding the lock dropped | The platform restarts it. Nothing to do |
 | `verify` exits non-zero | The index does not match the chain | Investigate before serving reads from it |
 
-`/metrics` exposes `veil_indexer_lag_ledgers`, `veil_indexer_indexed_ledger`,
+`GET /verify` returns the latest periodic `verify` (every 10 minutes by
+default): when it ran, whether it matched, and every check with both sides.
+`/metrics` exposes `veil_indexer_verify_ok`, `veil_indexer_lag_ledgers`, `veil_indexer_indexed_ledger`,
 `veil_indexer_latest_ledger`, `veil_indexer_events_stored_total`,
 `veil_indexer_sync_errors_total` and `veil_indexer_last_success_age_seconds`.
 
@@ -82,7 +84,15 @@ nothing and duplicates nothing.
 
 ## Railway
 
-`railway.json` at the repository root builds this Dockerfile and checks
-`/health` on deploy. The testnet deployment is one project holding a Postgres
-service and an `indexer` service whose `DATABASE_URL` references the
-Postgres service's variable, so the password is never copied by hand.
+The testnet deployment is one Railway project holding a Postgres service and
+an `indexer` service. The indexer's variables:
+
+| Variable | Value |
+|---|---|
+| `RAILWAY_DOCKERFILE_PATH` | `services/indexer/Dockerfile` (otherwise Railway tries its own builder, which cannot build this workspace) |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}`, a reference, so the password is never copied by hand and traffic stays on the private network |
+| `VEIL_POOL_CONTRACT`, `VEIL_ALLOWLIST_CONTRACT` | from `deployments/testnet.json` |
+| `PORT` | `8080` |
+
+Postgres has no public endpoint. Seeding happens inside the service on first
+start, and `verify` runs inside it on a timer (see `/verify`).

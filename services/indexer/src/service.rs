@@ -55,6 +55,18 @@ pub struct Status {
     pub last_error: Option<String>,
     pub events_stored: u64,
     pub sync_errors: u64,
+    /// The latest periodic `verify`, if one has run.
+    pub verification: Option<Verification>,
+}
+
+/// Outcome of one periodic `verify`.
+#[derive(Clone, Debug, Serialize)]
+pub struct Verification {
+    /// Unix seconds when it finished.
+    pub at: u64,
+    pub ok: bool,
+    pub report: Option<crate::verify::Report>,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -116,6 +128,16 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     (code, Json(report))
 }
 
+async fn verification(State(state): State<AppState>) -> impl IntoResponse {
+    match state.status.read().await.verification.clone() {
+        Some(verification) => (StatusCode::OK, Json(serde_json::json!(verification))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no verification has run yet" })),
+        ),
+    }
+}
+
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     let status = state.status.read().await;
     let mut out = String::new();
@@ -157,6 +179,12 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         Some(status.sync_errors),
     );
     line(
+        "veil_indexer_verify_ok",
+        "gauge",
+        "1 when the latest verify matched the chain, 0 when it did not.",
+        status.verification.as_ref().map(|v| u64::from(v.ok)),
+    );
+    line(
         "veil_indexer_last_success_age_seconds",
         "gauge",
         "Seconds since the last successful sync.",
@@ -170,6 +198,7 @@ pub fn router(status: Arc<RwLock<Status>>, config: Arc<ServiceConfig>) -> Router
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
+        .route("/verify", get(verification))
         .with_state(AppState { status, config })
 }
 
@@ -198,6 +227,60 @@ pub async fn shutdown_signal() {
     tokio::select! {
         () = interrupt => {}
         () = terminate => {}
+    }
+}
+
+/// Runs `verify` every `every` until `stop`, recording each outcome in
+/// `status`. Runs beside the follow loop, which it waits on to reach the
+/// ledger the chain state was read at.
+pub async fn verify_periodically(
+    rpc: &RpcClient,
+    store: &Store,
+    contracts: &Contracts,
+    every: Duration,
+    status: Arc<RwLock<Status>>,
+    mut stop: watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            _ = stop.changed() => return,
+            () = tokio::time::sleep(every) => {}
+        }
+        let outcome = tokio::select! {
+            _ = stop.changed() => return,
+            outcome = crate::verify::verify(rpc, store, contracts, Duration::from_secs(60)) => outcome,
+        };
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let verification = match outcome {
+            Ok(report) => {
+                if report.ok() {
+                    tracing::info!(
+                        pool_ledger = report.pool_ledger,
+                        "verify: index matches the chain"
+                    );
+                } else {
+                    tracing::error!(?report, "verify: MISMATCH between the index and the chain");
+                }
+                Verification {
+                    at,
+                    ok: report.ok(),
+                    report: Some(report),
+                    error: None,
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "verify could not run");
+                Verification {
+                    at,
+                    ok: false,
+                    report: None,
+                    error: Some(err.to_string()),
+                }
+            }
+        };
+        status.write().await.verification = Some(verification);
     }
 }
 

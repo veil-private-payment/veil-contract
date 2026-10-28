@@ -109,6 +109,11 @@ pub struct ServiceArgs {
     #[arg(long, env = "VEIL_READY_MAX_SILENCE_SECS", default_value_t = 120)]
     pub ready_max_silence_secs: u64,
 
+    /// Seconds between periodic `verify` runs, published on `/verify`.
+    /// 0 turns them off.
+    #[arg(long, env = "VEIL_VERIFY_EVERY_SECS", default_value_t = 600)]
+    pub verify_every_secs: u64,
+
     /// Seed from Stellar Expert on start when the database is empty.
     #[arg(
         long,

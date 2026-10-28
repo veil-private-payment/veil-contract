@@ -148,6 +148,7 @@ running one.
 | `VEIL_POLL_SECS` | `5` | Seconds between syncs at the tip |
 | `VEIL_READY_MAX_LAG` | `10` | `/ready` fails beyond this many ledgers behind |
 | `VEIL_READY_MAX_SILENCE_SECS` | `120` | `/ready` fails when no sync succeeded for this long |
+| `VEIL_VERIFY_EVERY_SECS` | `600` | `run` repeats `verify` this often and publishes the result on `/verify` and `veil_indexer_verify_ok`. 0 turns it off |
 | `VEIL_SEED_IF_EMPTY` | `true` | `run` seeds from Stellar Expert first when the database has neither a seed nor an RPC checkpoint |
 | `VEIL_PAGE_SIZE` | `200` | Events per `getEvents` call, 1 to 10,000 |
 | `VEIL_RPC_TIMEOUT_SECS` | `30` | Per-request timeout. Failed requests retry with backoff |

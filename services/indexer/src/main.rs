@@ -330,8 +330,27 @@ async fn serve(
         return Ok(());
     };
     let contracts = contracts(&chain);
+    let verifier = (args.verify_every_secs > 0).then(|| {
+        let (rpc, store, contracts, status, stop) = (
+            rpc.clone(),
+            store.clone(),
+            contracts.clone(),
+            status.clone(),
+            stop_rx.clone(),
+        );
+        let every = Duration::from_secs(args.verify_every_secs);
+        tokio::spawn(async move {
+            veil_indexer::service::verify_periodically(
+                &rpc, &store, &contracts, every, status, stop,
+            )
+            .await;
+        })
+    });
     let outcome =
         veil_indexer::service::run(&rpc, &store, lock, &contracts, config, status, stop_rx).await;
+    if let Some(verifier) = verifier {
+        verifier.abort();
+    }
     server.abort();
     store.pool().close().await;
     outcome
