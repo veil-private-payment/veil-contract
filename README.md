@@ -3,10 +3,12 @@
 Soroban contracts and Circom circuit for Veil, a compliance-gated shielded
 pool on Stellar.
 
-This repository holds the settlement layer only: the shielded pool contract,
-the Association Set Provider membership contract that gates every spend, the
+This repository holds the settlement layer: the shielded pool contract, the
+Association Set Provider membership contract that gates every spend, the
 Groth16/BN254 verifier contract, and the circuit that produces the proofs they
-check. Everything that sits above the settlement layer is out of scope here.
+check. Beside it are the read services an app needs: an indexer that rebuilds
+the contracts' state from their events, and a read-only API over it. Apps
+themselves are out of scope here.
 
 The protocol direction is inspired by Nethermind's Stellar Private Payments
 research implementation.
@@ -26,6 +28,8 @@ research implementation.
 | `circuits` | Circom policy transaction circuit, plus its proving and verifying keys |
 | `poseidon2` | Poseidon2 hash used by the contracts and the circuit |
 | `tools/policy-fixture` | Builds a witness, proves it, and settles the proof through the contracts |
+| `services/indexer` | Reads the pool and allowlist events into Postgres (history from Stellar Expert, then RPC) and verifies the stored trees against the on-chain roots |
+| `services/api` | Read-only HTTP API over the indexer's database: tree, paths, spent checks, notes, keys, allowlist |
 | `scripts` | Circuit compile and trusted setup helpers |
 | `deployments` | Deployed contract IDs and demonstration transaction hashes |
 | `docs` | Deploy and demo guide |
