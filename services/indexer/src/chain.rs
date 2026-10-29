@@ -48,7 +48,7 @@ pub enum ChainError {
 }
 
 /// The pool's tree as stored on chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct PoolTree {
     pub ledger: u32,
     pub levels: u32,
@@ -57,7 +57,7 @@ pub struct PoolTree {
 }
 
 /// The allowlist's tree as stored on chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct AllowlistTree {
     pub ledger: u32,
     pub levels: u32,

@@ -255,6 +255,9 @@ pub async fn verify_periodically(
             .map_or(0, |since| since.as_secs());
         let verification = match outcome {
             Ok(report) => {
+                if let Err(err) = report.record(store, contracts).await {
+                    tracing::warn!(error = %err, "could not record the verified state");
+                }
                 if report.ok() {
                     tracing::info!(
                         pool_ledger = report.pool_ledger,

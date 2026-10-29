@@ -81,7 +81,16 @@ async fn migrations_apply_to_an_empty_database_even_when_instances_race() {
         .fetch_one(db.store.pool())
         .await
         .expect("read migrations");
-    assert_eq!(applied, 1);
+    // Each migration file applied exactly once, however many instances raced.
+    let files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+        .expect("migrations directory")
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .is_ok_and(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"))
+        })
+        .count();
+    assert_eq!(applied, i64::try_from(files).expect("fits"));
     assert_eq!(db.count("contract_events").await, 0);
     db.drop().await;
 }

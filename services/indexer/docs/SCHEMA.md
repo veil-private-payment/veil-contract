@@ -35,6 +35,7 @@ addresses as strkeys, `i128` amounts as `numeric(39, 0)`.
 | `pool_public_keys` | Key registration | Latest per `(pool, owner)` wins. Indexed for that lookup |
 | `allowlist_events` | Allowlist addition or revocation | `leaf_index` set exactly for additions |
 | `ingest_checkpoints` | Ingestion stream | Cursor as TOID and event index |
+| `verified_state` | Contract (pool, allowlist) | The tree depth, size and root last read from the contract's storage, and whether the index matched. Written by `verify`, read by the API |
 
 `contract_events` also keeps host events that carry no Veil state, such as
 `executable_update` on a wasm upgrade, so the raw table is a complete record
@@ -86,10 +87,13 @@ cursor, which is exclusive.
 
 ## Migrations
 
-- Applied at start-up by `veil-indexer migrate`, `sync` and later the
-  long-running service. sqlx takes a Postgres advisory lock for the duration,
-  so instances starting together apply each migration once.
+- Applied at start-up by every `veil-indexer` command that touches the
+  database (`migrate`, `seed`, `sync`, `run`, `verify`). sqlx takes a
+  Postgres advisory lock for the duration, so instances starting together
+  apply each migration once.
 - Applied migrations are never edited. sqlx stores a checksum and refuses to
   start against a database whose applied migration differs from the file.
   Changes go in a new numbered file.
-- The read API will use a separate role with `SELECT` only.
+- The read API (`services/api`) never writes: every session it opens is set
+  read-only, so the database refuses a write even if the code issued one. A
+  separate `SELECT`-only role adds a second layer where the host allows it.
