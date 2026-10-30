@@ -30,6 +30,7 @@ research implementation.
 | `tools/policy-fixture` | Builds a witness, proves it, and settles the proof through the contracts |
 | `services/indexer` | Reads the pool and allowlist events into Postgres (history from Stellar Expert, then RPC) and verifies the stored trees against the on-chain roots |
 | `services/api` | Read-only HTTP API over the indexer's database: tree, paths, spent checks, notes, keys, allowlist |
+| `tools/demo` | `veil-demo`: makes a private payment on testnet using only the read API, with local keys and proofs |
 | `scripts` | Circuit compile and trusted setup helpers |
 | `deployments` | Deployed contract IDs and demonstration transaction hashes |
 | `docs` | Deploy and demo guide |

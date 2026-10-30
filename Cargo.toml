@@ -10,6 +10,7 @@ members = [
     "contracts/verifier",
     "poseidon2",
     "tools/policy-fixture",
+    "tools/demo",
     "services/indexer",
     "services/api",
 ]
@@ -43,6 +44,7 @@ getrandom = { version = "0.2", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 mock-verifier = { path = "contracts/mock-verifier" }
 num-bigint = { version = "0.4.6", default-features = false, features = ["serde"] }
+policy-fixture = { path = "tools/policy-fixture" }
 pool = { path = "contracts/pool" }
 serde_json = { version = "1", default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
