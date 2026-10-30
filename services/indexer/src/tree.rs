@@ -133,6 +133,87 @@ pub fn root(levels: u32, leaves: &[(u64, Field)]) -> Result<Field, TreeError> {
     Ok(nodes.get(&0).copied().unwrap_or(top))
 }
 
+/// A Merkle proof for one leaf: the sibling at each level from the leaf up,
+/// and the root they lead to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MerklePath {
+    pub index: u64,
+    pub leaf: Field,
+    pub siblings: Vec<Field>,
+    pub root: Field,
+}
+
+impl MerklePath {
+    /// Bit `i` set means the node at level `i` is a right child, the order the
+    /// circuit's `pathIndices` uses.
+    pub fn path_indices(&self) -> u64 {
+        self.index
+    }
+
+    /// Recomputes the root from the leaf and siblings.
+    pub fn computed_root(&self) -> Field {
+        let mut index = self.index;
+        let mut current = self.leaf;
+        for sibling in &self.siblings {
+            current = if index & 1 == 1 {
+                compress(*sibling, current)
+            } else {
+                compress(current, *sibling)
+            };
+            index >>= 1;
+        }
+        current
+    }
+}
+
+/// The proof for the leaf at `index` in a tree of depth `levels` holding
+/// `leaves`, or `None` if no leaf is set at `index`.
+pub fn path(
+    levels: u32,
+    leaves: &[(u64, Field)],
+    index: u64,
+) -> Result<Option<MerklePath>, TreeError> {
+    let zeroes = zeroes(levels)?;
+    let capacity = 1u64.checked_shl(levels).unwrap_or(u64::MAX);
+    let mut nodes: BTreeMap<u64, Field> = BTreeMap::new();
+    for &(at, leaf) in leaves {
+        if at >= capacity {
+            return Err(TreeError::IndexOutOfRange { index: at, levels });
+        }
+        if nodes.insert(at, leaf).is_some() {
+            return Err(TreeError::DuplicateIndex(at));
+        }
+    }
+    let Some(leaf) = nodes.get(&index).copied() else {
+        return Ok(None);
+    };
+
+    let mut siblings = Vec::with_capacity(usize::try_from(levels).unwrap_or(0));
+    let mut position = index;
+    for zero in zeroes.iter().take(usize::try_from(levels).unwrap_or(0)) {
+        siblings.push(nodes.get(&(position ^ 1)).copied().unwrap_or(*zero));
+        let mut parents = BTreeMap::new();
+        for &at in nodes.keys() {
+            let parent = at >> 1;
+            if parents.contains_key(&parent) {
+                continue;
+            }
+            let left = nodes.get(&(parent << 1)).copied().unwrap_or(*zero);
+            let right = nodes.get(&((parent << 1) | 1)).copied().unwrap_or(*zero);
+            parents.insert(parent, compress(left, right));
+        }
+        nodes = parents;
+        position >>= 1;
+    }
+    let top = zeroes.last().copied().unwrap_or_else(Field::zero);
+    Ok(Some(MerklePath {
+        index,
+        leaf,
+        siblings,
+        root: nodes.get(&0).copied().unwrap_or(top),
+    }))
+}
+
 /// An append-only tree that reports its root after every insertion, the way
 /// the allowlist contract's `insert_leaf` computes it.
 #[derive(Clone, Debug)]
@@ -247,6 +328,26 @@ mod tests {
             assert_eq!(Ok(incremental), root(5, &leaves));
         }
         assert_eq!(tree.next_index(), 9);
+    }
+
+    #[test]
+    fn every_path_leads_to_the_root() {
+        let levels = 5;
+        let leaves: Vec<(u64, Field)> = [0u64, 1, 2, 7, 8, 30, 31]
+            .iter()
+            .map(|&i| (i, field(u8::try_from(i).expect("small").saturating_add(1))))
+            .collect();
+        let expected = root(levels, &leaves).expect("root");
+        for &(index, leaf) in &leaves {
+            let proof = path(levels, &leaves, index)
+                .expect("path")
+                .expect("leaf exists");
+            assert_eq!(proof.leaf, leaf);
+            assert_eq!(proof.siblings.len(), 5);
+            assert_eq!(proof.root, expected);
+            assert_eq!(proof.computed_root(), expected, "leaf {index}");
+        }
+        assert_eq!(path(levels, &leaves, 3).expect("path"), None);
     }
 
     #[test]

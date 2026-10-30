@@ -35,6 +35,69 @@ pub enum VerifyError {
     Malformed { what: &'static str, value: String },
 }
 
+impl Report {
+    fn matches(&self, prefix: &str) -> bool {
+        self.checks
+            .iter()
+            .filter(|check| check.name.starts_with(prefix))
+            .all(Check::ok)
+    }
+
+    /// Records the on-chain state and whether the index matched it, for the
+    /// API to show beside its own roots.
+    pub async fn record(&self, store: &Store, contracts: &Contracts) -> Result<(), VerifyError> {
+        let rows = [
+            (
+                &contracts.pool,
+                "pool",
+                self.pool.ledger,
+                self.pool.levels,
+                self.pool.next_index,
+                self.pool.root,
+                false,
+                self.matches("pool:"),
+            ),
+            (
+                &contracts.allowlist,
+                "allowlist",
+                self.allowlist.ledger,
+                self.allowlist.levels,
+                self.allowlist.next_index,
+                self.allowlist.root,
+                self.allowlist.operator_maintained,
+                self.matches("allowlist:"),
+            ),
+        ];
+        for (contract, kind, ledger, levels, next_index, root, operator, matches) in rows {
+            let next_index = i64::try_from(next_index).map_err(|_| VerifyError::Malformed {
+                what: "next index",
+                value: next_index.to_string(),
+            })?;
+            sqlx::query(
+                "INSERT INTO verified_state \
+                     (contract, kind, ledger, levels, next_index, root, operator_maintained, matches) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                 ON CONFLICT (contract) DO UPDATE SET \
+                     kind = EXCLUDED.kind, ledger = EXCLUDED.ledger, levels = EXCLUDED.levels, \
+                     next_index = EXCLUDED.next_index, root = EXCLUDED.root, \
+                     operator_maintained = EXCLUDED.operator_maintained, \
+                     matches = EXCLUDED.matches, checked_at = now()",
+            )
+            .bind(contract)
+            .bind(kind)
+            .bind(i64::from(ledger))
+            .bind(i64::from(levels))
+            .bind(next_index)
+            .bind(root.as_bytes().as_slice())
+            .bind(operator)
+            .bind(matches)
+            .execute(store.pool())
+            .await?;
+        }
+        Ok(())
+    }
+}
+
 /// One comparison between the index and the chain.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Check {
@@ -53,6 +116,9 @@ impl Check {
 pub struct Report {
     pub pool_ledger: u32,
     pub allowlist_ledger: u32,
+    /// The on-chain state the index was compared with.
+    pub pool: PoolTree,
+    pub allowlist: AllowlistTree,
     pub checks: Vec<Check>,
 }
 
@@ -115,6 +181,8 @@ pub async fn verify(
     Ok(Report {
         pool_ledger: pool.ledger,
         allowlist_ledger: allowlist.ledger,
+        pool,
+        allowlist,
         checks,
     })
 }

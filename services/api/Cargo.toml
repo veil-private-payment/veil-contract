@@ -1,0 +1,35 @@
+[package]
+name = "veil-api"
+description = "Read-only HTTP API over the Veil indexer's database"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "veil-api"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+sqlx.workspace = true
+stellar-strkey.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tower_governor.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+veil-indexer.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+
+[lints]
+workspace = true

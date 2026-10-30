@@ -223,6 +223,7 @@ async fn seed(
 
 async fn verify(chain: ChainConfig, database: DatabaseConfig, ingest: IngestConfig) -> Result<()> {
     let store = connect(&database).await?;
+    store.migrate().await.context("applying migrations")?;
     let rpc = rpc_client(&chain, &ingest)?;
     let contracts = contracts(&chain);
     // With no indexer running, catch up first. With one running, it holds
@@ -249,6 +250,10 @@ async fn verify(chain: ChainConfig, database: DatabaseConfig, ingest: IngestConf
     }
     let report =
         veil_indexer::verify::verify(&rpc, &store, &contracts, Duration::from_secs(60)).await?;
+    report
+        .record(&store, &contracts)
+        .await
+        .context("recording the verified state")?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     for check in &report.checks {
         if check.ok() {
