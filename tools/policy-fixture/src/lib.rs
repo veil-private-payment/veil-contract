@@ -220,7 +220,16 @@ fn generate_inner(
     );
 
     let policy_inputs = build_policy_inputs(ext_data_hash, ext_amount, funding, root_override)?;
-    let proof_result = prove_and_verify(&wasm_path, &r1cs_path, &proving_key_path, &policy_inputs)?;
+    // The fixtures are reproducible on purpose. Real transactions use
+    // [`prove_transaction`], which draws fresh randomness for every proof.
+    let mut rng = StdRng::seed_from_u64(PROOF_RNG_SEED);
+    let proof_result = prove_and_verify(
+        &wasm_path,
+        &r1cs_path,
+        &proving_key_path,
+        &policy_inputs,
+        &mut rng,
+    )?;
 
     Ok(Fixture {
         proof: proof_result.proof,
@@ -304,11 +313,12 @@ fn repo_root() -> Result<PathBuf> {
     Ok(repo_root.to_path_buf())
 }
 
-fn prove_and_verify(
+fn prove_and_verify<R: ark_std::rand::RngCore + ark_std::rand::CryptoRng>(
     wasm_path: &Path,
     r1cs_path: &Path,
     proving_key_path: &Path,
     inputs: &PolicyInputs,
+    rng: &mut R,
 ) -> Result<ProofResult> {
     let file = File::open(proving_key_path)
         .with_context(|| format!("failed to open {}", proving_key_path.display()))?;
@@ -341,8 +351,7 @@ fn prove_and_verify(
         public_inputs.len()
     );
 
-    let mut rng = StdRng::seed_from_u64(PROOF_RNG_SEED);
-    let proof = Groth16::<Bn254, CircomReduction>::prove(&pk, circuit, &mut rng)
+    let proof = Groth16::<Bn254, CircomReduction>::prove(&pk, circuit, rng)
         .map_err(|err| anyhow!("failed to generate Groth16 proof: {err}"))?;
     let verified =
         Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(&pvk, &public_inputs, &proof)
@@ -824,7 +833,8 @@ fn merkle_proof(leaves: &[Scalar], mut index: usize) -> Result<(Vec<Scalar>, u64
     Ok((path_elements, path_indices, levels))
 }
 
-fn scalar_to_be_bytes(value: Scalar) -> [u8; 32] {
+/// A scalar as 32 big-endian bytes.
+pub fn scalar_to_be_bytes(value: Scalar) -> [u8; 32] {
     let bytes = value.into_bigint().to_bytes_be();
     let mut buf = [0u8; 32];
     let offset = buf.len().saturating_sub(bytes.len());
@@ -914,4 +924,282 @@ fn hex_prefixed(bytes: &[u8]) -> String {
 fn write_json_pretty(path: &Path, value: &Value) -> Result<()> {
     let content = serde_json::to_string_pretty(value)?;
     fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
+}
+
+// ---------------------------------------------------------------------------
+// Transactions with caller-chosen notes
+// ---------------------------------------------------------------------------
+
+/// A BN254 scalar, the field every note value lives in.
+pub type NoteScalar = Scalar;
+
+/// Depth of the pool and allowlist trees the circuit was compiled for.
+pub const TREE_LEVELS: usize = LEVELS;
+
+/// The public key of a note private key, as the circuit's `Keypair` derives it.
+pub fn note_public_key(private_key: Scalar) -> Scalar {
+    derive_public_key(private_key)
+}
+
+/// The commitment of a note, `Poseidon2(amount, public key, blinding)`.
+pub fn note_commitment(amount: Scalar, public_key: Scalar, blinding: Scalar) -> Scalar {
+    commitment(amount, public_key, blinding)
+}
+
+/// The nullifier spending the note `commitment` at `path_indices` (its leaf
+/// index), signed by `private_key`.
+pub fn note_nullifier(private_key: Scalar, commitment: Scalar, path_indices: u64) -> Scalar {
+    let path = Scalar::from(path_indices);
+    nullifier(commitment, path, sign(private_key, commitment, path))
+}
+
+/// The allowlist leaf enrolling a note public key (membership blinding 0).
+pub fn membership_leaf(public_key: Scalar) -> Scalar {
+    poseidon2_hash2(public_key, Scalar::zero(), Some(Scalar::from(1u64)))
+}
+
+/// A note being spent. A zero `amount` is a dummy: the circuit skips its
+/// Merkle check, so its `path_elements` may be anything, but its nullifier is
+/// still published, so its `blinding` must be fresh.
+#[derive(Clone, Debug)]
+pub struct SpentNote {
+    pub private_key: Scalar,
+    pub blinding: Scalar,
+    pub amount: u128,
+    pub leaf_index: u64,
+    /// Siblings from the leaf up, `TREE_LEVELS` of them.
+    pub path_elements: Vec<Scalar>,
+}
+
+/// A note being created.
+#[derive(Clone, Copy, Debug)]
+pub struct CreatedNote {
+    pub public_key: Scalar,
+    pub blinding: Scalar,
+    pub amount: u128,
+}
+
+/// The allowlist path of a spender's membership leaf.
+#[derive(Clone, Debug)]
+pub struct Membership {
+    pub path_elements: Vec<Scalar>,
+    pub path_indices: u64,
+    pub root: Scalar,
+}
+
+/// Everything a `policy_tx_2_2` proof binds.
+#[derive(Clone, Debug)]
+pub struct Transaction {
+    /// A root the pool holds. Ignored by the circuit when both inputs are
+    /// dummies, but the pool still requires it to be known.
+    pub root: Scalar,
+    /// Positive to move value in, negative to move it out, zero for a
+    /// private transfer.
+    pub ext_amount: i128,
+    pub ext_data_hash: [u8; 32],
+    pub inputs: [SpentNote; 2],
+    /// The allowlist path of each input's key.
+    pub memberships: [Membership; 2],
+    pub outputs: [CreatedNote; 2],
+}
+
+/// Proves `transaction` with fresh randomness from `rng`, and checks the
+/// proof against the verifying key before returning it.
+pub fn prove_transaction<R: ark_std::rand::RngCore + ark_std::rand::CryptoRng>(
+    transaction: &Transaction,
+    rng: &mut R,
+) -> Result<Fixture> {
+    let repo_root = repo_root()?;
+    let artifact_dir = repo_root.join("target/circuits-artifacts/manual");
+    let wasm_path = artifact_dir.join("policy_tx_2_2_js/policy_tx_2_2.wasm");
+    let r1cs_path = artifact_dir.join("policy_tx_2_2.r1cs");
+    let proving_key_path = repo_root.join("circuits/keys/policy_tx_2_2_proving_key.bin");
+    ensure!(
+        wasm_path.exists() && r1cs_path.exists(),
+        "compiled circuit artifacts are missing; run `make compile-policy-circuit` first"
+    );
+    let policy_inputs = transaction_inputs(transaction)?;
+    let proof_result = prove_and_verify(
+        &wasm_path,
+        &r1cs_path,
+        &proving_key_path,
+        &policy_inputs,
+        rng,
+    )?;
+    Ok(Fixture {
+        proof: proof_result.proof,
+        public_inputs: proof_result.public_inputs,
+        policy_inputs,
+    })
+}
+
+fn amount_scalar(amount: u128) -> Scalar {
+    Scalar::from(BigUint::from(amount))
+}
+
+fn transaction_inputs(tx: &Transaction) -> Result<PolicyInputs> {
+    let sum_in = tx
+        .inputs
+        .iter()
+        .try_fold(0u128, |sum, note| sum.checked_add(note.amount))
+        .context("input amounts overflow")?;
+    let sum_out = tx
+        .outputs
+        .iter()
+        .try_fold(0u128, |sum, note| sum.checked_add(note.amount))
+        .context("output amounts overflow")?;
+    let balanced = if tx.ext_amount >= 0 {
+        sum_in.checked_add(tx.ext_amount.unsigned_abs()) == Some(sum_out)
+    } else {
+        sum_in.checked_sub(tx.ext_amount.unsigned_abs()) == Some(sum_out)
+    };
+    ensure!(
+        balanced,
+        "inputs ({sum_in}) plus the external amount ({}) must equal the outputs ({sum_out})",
+        tx.ext_amount
+    );
+    let public_amount = if tx.ext_amount >= 0 {
+        amount_scalar(tx.ext_amount.unsigned_abs())
+    } else {
+        Scalar::zero() - amount_scalar(tx.ext_amount.unsigned_abs())
+    };
+    let ext_data_hash = scalar_from_be_bytes(&tx.ext_data_hash);
+
+    let mut public_keys = Vec::with_capacity(2);
+    let mut input_commitments = Vec::with_capacity(2);
+    let mut nullifiers = Vec::with_capacity(2);
+    for note in &tx.inputs {
+        ensure!(
+            note.path_elements.len() == LEVELS,
+            "an input path needs {LEVELS} elements"
+        );
+        let public_key = derive_public_key(note.private_key);
+        let cm = commitment(amount_scalar(note.amount), public_key, note.blinding);
+        nullifiers.push(note_nullifier(note.private_key, cm, note.leaf_index));
+        public_keys.push(public_key);
+        input_commitments.push(cm);
+    }
+    ensure!(
+        nullifiers[0] != nullifiers[1],
+        "the two inputs have the same nullifier; give dummy inputs a fresh blinding"
+    );
+    for membership in &tx.memberships {
+        ensure!(
+            membership.path_elements.len() == LEVELS,
+            "a membership path needs {LEVELS} elements"
+        );
+    }
+    let output_commitments: Vec<Scalar> = tx
+        .outputs
+        .iter()
+        .map(|note| commitment(amount_scalar(note.amount), note.public_key, note.blinding))
+        .collect();
+
+    let mut records = Vec::new();
+    push_scalar(&mut records, "root", tx.root);
+    push_scalar(&mut records, "publicAmount", public_amount);
+    push_scalar(&mut records, "extDataHash", ext_data_hash);
+    push_scalars(&mut records, "inputNullifier", &nullifiers);
+    push_scalars(&mut records, "outputCommitment", &output_commitments);
+    push_scalars(
+        &mut records,
+        "membershipRoots",
+        &tx.memberships.iter().map(|m| m.root).collect::<Vec<_>>(),
+    );
+    let mut membership_leaves = Vec::with_capacity(2);
+    for (index, membership) in tx.memberships.iter().enumerate() {
+        let leaf = membership_leaf(public_keys[index]);
+        membership_leaves.push(leaf);
+        let prefix = format!("membershipProofs[{index}][0]");
+        push_scalar(&mut records, &format!("{prefix}.leaf"), leaf);
+        push_scalar(&mut records, &format!("{prefix}.blinding"), Scalar::zero());
+        push_scalar(
+            &mut records,
+            &format!("{prefix}.pathIndices"),
+            Scalar::from(membership.path_indices),
+        );
+        push_scalars(
+            &mut records,
+            &format!("{prefix}.pathElements"),
+            &membership.path_elements,
+        );
+    }
+    push_scalars(
+        &mut records,
+        "inAmount",
+        &tx.inputs
+            .iter()
+            .map(|note| amount_scalar(note.amount))
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "inPrivateKey",
+        &tx.inputs
+            .iter()
+            .map(|note| note.private_key)
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "inBlinding",
+        &tx.inputs
+            .iter()
+            .map(|note| note.blinding)
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "inPathIndices",
+        &tx.inputs
+            .iter()
+            .map(|note| Scalar::from(note.leaf_index))
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "inPathElements",
+        &tx.inputs
+            .iter()
+            .flat_map(|note| note.path_elements.iter().copied())
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "outAmount",
+        &tx.outputs
+            .iter()
+            .map(|note| amount_scalar(note.amount))
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "outPubkey",
+        &tx.outputs
+            .iter()
+            .map(|note| note.public_key)
+            .collect::<Vec<_>>(),
+    );
+    push_scalars(
+        &mut records,
+        "outBlinding",
+        &tx.outputs
+            .iter()
+            .map(|note| note.blinding)
+            .collect::<Vec<_>>(),
+    );
+
+    Ok(PolicyInputs {
+        values: records,
+        witness_json: Value::Null,
+        input_json: Value::Null,
+        input_commitments: input_commitments
+            .into_iter()
+            .map(scalar_to_be_bytes)
+            .collect(),
+        membership_leaves: membership_leaves
+            .into_iter()
+            .map(scalar_to_be_bytes)
+            .collect(),
+    })
 }
