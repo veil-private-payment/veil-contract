@@ -22,3 +22,6 @@ circuits/**/*_js/
 coverage/
 .turbo/
 .vite/
+
+# veil-demo wallets (testnet keys)
+/.veil-demo/

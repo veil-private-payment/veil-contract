@@ -1,0 +1,45 @@
+[package]
+name = "veil-demo"
+description = "Makes a private payment on testnet using only the Veil read API and RPC"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "veil-demo"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+ark-ff = { workspace = true, features = ["std"] }
+ark-std.workspace = true
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+clap.workspace = true
+getrandom = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["std"] }
+hkdf = "0.12"
+num-bigint = { workspace = true, features = ["std"] }
+policy-fixture.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+sha2-10 = { package = "sha2", version = "0.10" }
+sha3 = "0.10"
+stellar-strkey.workspace = true
+stellar-xdr.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[dev-dependencies]
+asp-membership.workspace = true
+circom-groth16-verifier.workspace = true
+contract-types.workspace = true
+pool.workspace = true
+veil-indexer.workspace = true
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[lints]
+workspace = true

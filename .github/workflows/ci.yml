@@ -48,10 +48,10 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # The policy-fixture integration test proves a circuit, which needs the
-      # compiled artifacts. The circuit job below covers it.
+      # The policy-fixture and veil-demo integration tests prove a circuit,
+      # which needs the compiled artifacts. The circuit job below covers them.
       - name: Test
-        run: cargo test --workspace --exclude policy-fixture --locked
+        run: cargo test --workspace --exclude policy-fixture --exclude veil-demo --locked
 
       - name: Build contract wasm
         run: cargo build --release --target wasm32v1-none -p pool -p asp-membership -p circom-groth16-verifier --locked
@@ -123,4 +123,4 @@ jobs:
       # Proves against the committed proving key and settles the proof through
       # the pool, the ASP membership contract and the Groth16 verifier.
       - name: Prove and settle
-        run: cargo test -p policy-fixture --locked
+        run: cargo test -p policy-fixture -p veil-demo --locked
