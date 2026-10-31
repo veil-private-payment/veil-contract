@@ -120,6 +120,81 @@ pub struct Report {
     pub pool: PoolTree,
     pub allowlist: AllowlistTree,
     pub checks: Vec<Check>,
+    pub evidence: Evidence,
+}
+
+/// What a reviewer needs to read the report on its own: which network and
+/// contracts, which build, where the stored events came from, and how the
+/// pool's tree size breaks down.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Evidence {
+    /// As RPC reported it, so the network is confirmed by the chain.
+    pub network_passphrase: String,
+    pub pool: String,
+    pub allowlist: String,
+    pub indexer_version: &'static str,
+    /// Stored events per contract and source, up to the pool state's ledger.
+    pub events_by_source: Vec<SourceCount>,
+    /// Commitment rows stored for the pool.
+    pub pool_commitment_rows: u64,
+    /// Tree positions holding the zero leaf the closed deposit path inserted
+    /// beside each deposit, which emitted no event. Rows plus these equal the
+    /// pool's next index.
+    pub pool_legacy_zero_positions: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct SourceCount {
+    pub contract: String,
+    /// `stellar_expert` or `rpc`.
+    pub source: String,
+    pub events: u64,
+}
+
+async fn evidence(
+    rpc: &RpcClient,
+    store: &Store,
+    contracts: &Contracts,
+    ledger: u32,
+) -> Result<Evidence, VerifyError> {
+    let network_passphrase = rpc.network_passphrase().await.map_err(ChainError::from)?;
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT contract, source, count(*) FROM contract_events \
+         WHERE ledger <= $1 AND contract IN ($2, $3) GROUP BY contract, source \
+         ORDER BY contract, source",
+    )
+    .bind(i64::from(ledger))
+    .bind(&contracts.pool)
+    .bind(&contracts.allowlist)
+    .fetch_all(store.pool())
+    .await?;
+    let events_by_source = rows
+        .into_iter()
+        .map(|(contract, source, events)| {
+            Ok(SourceCount {
+                contract,
+                source,
+                events: index(events, "event count")?,
+            })
+        })
+        .collect::<Result<Vec<_>, VerifyError>>()?;
+    let (commitments, zeros): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE origin = 'legacy_deposit') \
+         FROM pool_commitments WHERE pool = $1 AND ledger <= $2",
+    )
+    .bind(&contracts.pool)
+    .bind(i64::from(ledger))
+    .fetch_one(store.pool())
+    .await?;
+    Ok(Evidence {
+        network_passphrase,
+        pool: contracts.pool.clone(),
+        allowlist: contracts.allowlist.clone(),
+        indexer_version: env!("CARGO_PKG_VERSION"),
+        events_by_source,
+        pool_commitment_rows: index(commitments, "commitment count")?,
+        pool_legacy_zero_positions: index(zeros, "deposit count")?,
+    })
 }
 
 impl Report {
@@ -178,12 +253,14 @@ pub async fn verify(
 
     let mut checks = check_pool(store, &contracts.pool, &pool).await?;
     checks.extend(check_allowlist(store, &contracts.allowlist, &allowlist).await?);
+    let evidence = evidence(rpc, store, contracts, pool.ledger).await?;
     Ok(Report {
         pool_ledger: pool.ledger,
         allowlist_ledger: allowlist.ledger,
         pool,
         allowlist,
         checks,
+        evidence,
     })
 }
 

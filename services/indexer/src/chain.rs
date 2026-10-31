@@ -76,6 +76,16 @@ pub struct LedgerRange {
 }
 
 impl RpcClient {
+    /// The passphrase of the network RPC serves, from `getNetwork`.
+    pub async fn network_passphrase(&self) -> Result<String, RpcError> {
+        #[derive(Deserialize)]
+        struct Network {
+            passphrase: String,
+        }
+        let network: Network = self.call("getNetwork", &serde_json::Value::Null).await?;
+        Ok(network.passphrase)
+    }
+
     pub async fn ledger_range(&self) -> Result<LedgerRange, RpcError> {
         self.call("getHealth", &serde_json::Value::Null).await
     }

@@ -3,6 +3,25 @@
 The indexer is one container and one Postgres database. Nothing in it holds a
 key or signs anything: it only reads the chain and writes its own database.
 
+## Run it locally
+
+Everything a reviewer needs to reproduce the setup on one machine:
+
+```sh
+docker compose -f services/indexer/docker-compose.yml up -d   # Postgres on :5433
+export DATABASE_URL=postgres://veil:veil@localhost:5433/veil
+export VEIL_POOL_CONTRACT=CDJELV6HUP6BKVWBUIFR7GEJPQDQRV5PCSUTEODOKSGTJPUD7DZ6B66G
+export VEIL_ALLOWLIST_CONTRACT=CBRZ7RD5ESD7LRMPA5QY2V2BTMJBGISHS4SXE3NWFKAKB4BOJF2OBRMB
+
+cargo run -p veil-indexer -- migrate   # applies the migrations to the empty database
+cargo run -p veil-indexer -- run &     # seeds from Stellar Expert, then follows RPC on :8080
+cargo run -p veil-indexer -- verify    # compares the index with the chain, exits 0 on a match
+VEIL_LISTEN=0.0.0.0:8081 cargo run -p veil-api   # the read API on :8081
+```
+
+Then make a private payment against the local API with `tools/demo` (see
+its README, passing `--api http://localhost:8081`).
+
 ## Image
 
 ```sh

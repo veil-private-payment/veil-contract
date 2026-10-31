@@ -283,6 +283,20 @@ async fn chain_server() -> MockServer {
             .mount(&server)
             .await;
     }
+    // getNetwork, as testnet RPC answers it.
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({ "method": "getNetwork" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "friendbotUrl": "https://friendbot.stellar.org/",
+                "passphrase": "Test SDF Network ; September 2015",
+                "protocolVersion": 25
+            }
+        })))
+        .mount(&server)
+        .await;
     server
 }
 
@@ -322,6 +336,32 @@ async fn verify_end_to_end_reads_the_chain_and_passes() {
     assert!(report.ok(), "{report:#?}");
     assert_eq!(report.pool_ledger, STATE_LEDGER);
     assert_eq!(report.checks.len(), 8);
+
+    // The evidence a reviewer reads beside the checks.
+    let evidence = &report.evidence;
+    assert_eq!(
+        evidence.network_passphrase,
+        "Test SDF Network ; September 2015"
+    );
+    assert_eq!(
+        (evidence.pool.as_str(), evidence.allowlist.as_str()),
+        (POOL, ALLOWLIST)
+    );
+    // 34 positions: 27 commitment rows and the 7 zero leaves beside deposits.
+    assert_eq!(evidence.pool_commitment_rows, 27);
+    assert_eq!(evidence.pool_legacy_zero_positions, 7);
+    assert_eq!(
+        evidence
+            .pool_commitment_rows
+            .checked_add(evidence.pool_legacy_zero_positions),
+        Some(report.pool.next_index)
+    );
+    let counts: Vec<(&str, &str, u64)> = evidence
+        .events_by_source
+        .iter()
+        .map(|count| (count.contract.as_str(), count.source.as_str(), count.events))
+        .collect();
+    assert_eq!(counts, [(ALLOWLIST, "rpc", 5), (POOL, "rpc", 69)]);
     db.drop().await;
 }
 

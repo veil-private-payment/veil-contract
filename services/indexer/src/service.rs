@@ -390,6 +390,7 @@ pub async fn run(
                 status.last_error = None;
                 if report.inserted > 0 {
                     tracing::info!(
+                        source = "rpc",
                         inserted = report.inserted,
                         indexed_ledger = status.indexed_ledger,
                         "stored new events"
